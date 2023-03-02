@@ -7,15 +7,27 @@ utility functions for parameter calculations
 @author: phillms1
 """
 import numpy as np
+from tqdm import tqdm
+from scipy.interpolate import CubicSpline as cs
+import multiprocessing as mp
 
 # function for parallel processing
+def getCubicSplineIntegral(args):
+    wv_um_,spec_vec = args
+    if spec_vec.any() is np.nan:
+        integrand = np.nan
+    else:
+        splineFit = cs(wv_um_, spec_vec)
+        integrand = splineFit.integrate(wv_um_[0], wv_um_[-1])
+    return integrand
+    
 def getPolyInt(args):
     wv_um_,spec_vec,d = args
     coefs = np.polyfit(wv_um_,spec_vec,d)
     poly=np.poly1d(coefs)
     pint = np.poly1d(poly.integ())
-    integ = pint(wv_um_[-1])-pint(wv_um_[0])
-    return integ
+    integrand = pint(wv_um_[-1])-pint(wv_um_[0])
+    return integrand
     
 def getPoly(args):
     rp_w,rp_flat,d = args
@@ -26,7 +38,81 @@ def getPoly(args):
 class utility_functions:
     def __init__(self):
         print('utilities on')
+    
+    def getBandArea(self, cube, wvt, low, high, lw=5, hw=5):
+        # this isn't really band area... it's average height 
+        y1 = self.getBand(cube, wvt, low, kwidth=lw)
+        x1 = self.getClosestWavelength(low, wvt)
+        y2 = self.getBand(cube, wvt, high, kwidth=hw)
+        x2 = self.getClosestWavelength(high, wvt)
+        m = (y2-y1)/(x2-x1) #m is the slope at all pixels
+        b = y2-m*x2         #b is the intercept at all pixels
+        woi = np.linspace(wvt.index(x1),wvt.index(x2),wvt.index(x2)-wvt.index(x1)+1,dtype=int).tolist()
+        h = np.zeros(y1.shape,dtype=np.float32)
+        for i in woi:
+            y = m*wvt[i]+b #continuum value
+            h += y-self.getBand(cube,wvt,wvt[i],kwidth=1)
+        # h = 1000*h/(x2-x1)
         
+        
+        # fit a polynomial and integrate 
+        # y1 = self.getBand(cube, wvt, low, kwidth=lw)
+        # x1 = self.getClosestWavelength(low, wvt)
+        # y2 = self.getBand(cube, wvt, high, kwidth=hw)
+        # x2 = self.getClosestWavelength(high, wvt)
+        # m = (y2-y1)/(x2-x1) #m is the slope at all pixels
+        # b = y2-m*x2         #b is the intercept at all pixels
+        # woi = np.linspace(wvt.index(x1),wvt.index(x2),wvt.index(x2)-wvt.index(x1)+1,dtype=int).tolist()
+        # wl = [wvt[i] for i in woi]
+        # h = np.zeros([y1.shape[0],y1.shape[1],len(woi)],dtype=np.float32)
+        # j=0
+        # ba = []
+        # for i in woi:
+        #     y = m*wvt[i]+b #continuum value
+        #     if y.all() is False: 
+        #         breakpoint()
+        #     h[:,:,j] = 1 - self.getBand(cube,wvt,wvt[i],kwidth=1)/y
+        #     j+=1
+        # s1,s2,s3 = h.shape
+        # h_flat = np.reshape(h,[s1*s2,s3])
+        # bad_values = np.hstack((np.where(np.isinf(h_flat)),np.where(np.isnan(h_flat))))
+        # for i in range(bad_values[0].shape[0]):
+        #     try:
+        #         h_flat[bad_values[0][i],bad_values[1][i]] = np.median((h_flat[bad_values[0][i],bad_values[1][i]-1],
+        #                                                                h_flat[bad_values[0][i],bad_values[1][i]+1]))
+        #     except IndexError as error:
+        #         print(error)
+        #         h_flat[bad_values[0][i],bad_values[1][i]] = 0
+                
+        # args = [(wl, h_flat[i,:]) for i in tqdm(range(s1*s2))]
+        # print('\n\treturning integrated polynomial values')
+        # # breakpoint()
+        # with mp.Pool(6) as pool:
+        #     for integrand in pool.imap(getCubicSplineIntegral,args):
+        #         ba.append(integrand)
+        # ba = np.reshape(ba,[s1,s2])
+        
+        # h = 1000*h/(x2-x1)
+        
+        return h
+    
+    def getBandAreaInvert(self, cube, wvt, low, high, lw=5, hw=5):
+        # this isn't really band area... it's average height 
+        y1 = self.getBand(cube, wvt, low, kwidth=lw)
+        x1 = self.getClosestWavelength(low, wvt)
+        y2 = self.getBand(cube, wvt, high, kwidth=hw)
+        x2 = self.getClosestWavelength(high, wvt)
+        m = (y2-y1)/(x2-x1) #m is the slope at all pixels
+        b = y2-m*x2         #b is the intercept at all pixels
+        woi = np.linspace(wvt.index(x1),wvt.index(x2),wvt.index(x2)-wvt.index(x1)+1,dtype=int).tolist()
+        h = np.zeros(y1.shape,dtype=np.float32)
+        for i in woi:
+            y = m*wvt[i]+b #continuum value
+            h += y-self.getBand(cube,wvt,wvt[i],kwidth=1)
+        # h = 1000*h/(x2-x1)
+        
+        return -h
+    
     def getBand(cube,wvt,wl,kwidth = 5):
         delta = [q-wl for q in wvt]
         bindex = delta.index(min(delta,key=abs))
@@ -50,11 +136,11 @@ class utility_functions:
         a[:,:,2]=p3
         return a
     
-    def getBandDepth(self,cube, wvt,low,mid,hi,lw=5,mw=5,hw=5):
+    def getBandDepth(self, cube, wvt,low, mid, hi, lw=5, mw=5, hw=5):
         # retrieve bands from cube
-        Rlow = self.getBand(cube,wvt,low,kwidth=lw)
-        Rmid = self.getBand(cube, wvt,mid,kwidth=mw)
-        Rhi = self.getBand(cube,wvt,hi,kwidth=hw)
+        Rlow = self.getBand(cube, wvt, low, kwidth=lw)
+        Rmid = self.getBand(cube, wvt, mid, kwidth=mw)
+        Rhi = self.getBand(cube, wvt, hi, kwidth=hw)
         
         # determine wavelengths for low, mid, hi
         WL = self.getClosestWavelength(low,wvt)

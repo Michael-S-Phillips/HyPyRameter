@@ -2,55 +2,32 @@
 # -*- coding: utf-8 -*-
 """
 Created on Sun Jul 10 14:40:28 2022
+script to drive the paramCalculator, generates spectral parameter prodcuts from
+HySpex data
 
-This script is designed to drive the paramCalculator class in the associated paramCalculator.py file.
-The paramCalculator class generates spectral parameter prodcuts from hyperspectral image data.
-
-The Spectral (https://www.spectralpython.net) package is used for image ingest. Specifically, the envi i/o subpackage is used. 
-The paramCalculator class could be edited in future versions to accomodate different image formats.
-
-@author: 
-    Michael S. Phillips, JHU/APL
-
+@author: phillms1
 """
 import os
+# import sys
 import numpy as np
 import cv2
 from param_utils import utility_functions as u
 from paramCalculator import paramCalculator
+from spectral import calc_stats,noise_from_diffs,mnf
 import spectral.io.envi as envi
+# sys.path.append('/Users/phillms1/Documents/Work/RAVEN/RAVEN_parameters/hyspex_parameters/')
+# data_path = os.path.abspath(os.path.join('/Volumes/HySpex_Back/RAVEN/FieldSeason_2022/TriPod/DryRun220723'))
+data_path = os.path.abspath(os.path.join('/Volumes/Arrakis/HySpex_Iceland/Drone'))
+# shdr = data_path + '/Crop/sTargetRocks.hdr'
+# vhdr = data_path + '/Crop/vTargetRocks.hdr'
+vhdr = data_path + '/Namafjall_Drone_Scene_Inverse_MNF.hdr'
+shdr = False
+# shdr = data_path + '/TrainingData/SWIR_OUTPUT_training/boresight_26_april_1_Mjolnir_S620_SN7064_raw_rad_keystone_smile_bsq_float32_geo.hdr'
+# vhdr = data_path + '/TrainingData/VNIR_OUTPUT_training/boresight_26_april_1_Mjolnir_V1240_SN5037_raw_rad_keystone_smile_spectralbinningx2_bsq_float32_geo.hdr'
 
-#%% data ingestion and paramCalculator initiation
+p = paramCalculator(data_path,vhdr,shdr,crop=[400,1220,100,2500])
 
-# Path to your data directory
-data_path = os.path.abspath(os.path.join('/Volumes/Arrakis/HySpex_Iceland/Tripod/SWIR'))
-
-# path to your ENVI .hdr file. For VNIR (400-100 nm) files use vhdr, for SWIR (1000-2600 nm) files use shdr 
-shdr = data_path + '/Reflected_R_ACTIVE1_02_Denoised2.hdr'
-vhdr = False
-
-# If you have a bad bands list, instantiate it here.
-# bbl = np.hstack((np.linspace(74,87,(87-74+1)),np.linspace(163,192,(192-163+1)),np.linspace(296,300,300-296+1)))
-
-# p is the paramCalculator object
-p = paramCalculator(data_path,vhdr,shdr)
-'''
-there is a "denoise" option in the paramCalculator. It uses the non-global meets local 
-low-rank tensor solution from this paper https://ieeexplore.ieee.org/document/9208755. 
-Based on experience, I recommend caution if using this denoise routine because it can change
-your data in unexpected and non-ideal ways. If your image has < 2 million pixels, 
-(or if you have a system with a lot of memory and compute power) you can use
-the iovf_generic noise remediation routine that is in the attached .py document with 
-the same name. This works quite well and applies noise remediation with a light touch.
-'''
-# optionally preview your data
-# p.previewData()
-
-# optionally transpose the data for better display
-# p.v = np.transpose(p.v,axes=(1,0,2))
-# p.s = np.transpose(p.s,axes=(1,0,2))
-
-# savepath is where to save your output parameter images
+date_path='221213' #YYMMDD
 savepath = data_path+'/parameters/'
 if os.path.isdir(savepath) is False:
     os.mkdir(savepath)
@@ -59,47 +36,25 @@ if os.path.isdir(savepath) is False:
 '''
 calculate spectral parameters from SWIR image data, save as .img and as .png
 '''
-from spectral.io.envi import EnviException as EnviException
 #------------------------------------------------------------------------------
 #------------- SWIR Parameters ------------------------------------------------
 #------------------------------------------------------------------------------
-
-# full path for the output parameter ENVI file
-sParams_file_name = savepath+'/active_swir_parameters_downsample.hdr'
-
 if shdr != False:
-    paramList = ['OLINDEX3','LCPINDEX2','HCPINDEX2','BD1400','BD1450', 'BD1900_2',
-                 'BD1900r2','BD2100_2','BD2165','BD2190','BD2210_2','BD2250','BD2290',
-                 'BD2355','BDCARB','D2200','D2300','IRR2','ISLOPE','MIN2250','MIN2295_2480',
-                 'MIN2345_2537','R2529', 'R1506', 'R1080','SINDEX2','BD1200','BD2100_3','GypTrip',
-                 'ILL']
+    paramList = ['OLINDEX3','LCPINDEX2','HCPINDEX2','BD1400','BD1900_2','BD1900r2','BD2100_2','BD2165','BD2190','BD2210_2','BD2250','BD2290','BD2355','BDCARB','D2200','D2300','IRR2','ISLOPE','MIN2250','MIN2295_2480','MIN2345_2537','R2529', 'R1506', 'R1080','SINDEX2']
     sMeta = p.s_.metadata.copy()
     sMeta['wavelength'] = paramList
-    sMeta['band names'] = paramList
     sMeta['wavelength units'] = 'parameters'
     sMeta['default bands'] = ['R2529', 'R1506', 'R1080']
     print('calculating SWIR parameters')
     sParams=p.calculateSwirParams()
-    try:
-        envi.save_image(sParams_file_name, sParams,
-                        metadata=sMeta, dtype=np.float32)
-    except EnviException as error:
-        print(error)
-        choice = input('file exists, would you like to overwite?\n\ty or n\n')
-        choice = choice.lower()
-        if choice == 'y':
-            envi.save_image(sParams_file_name, sParams,
-                            metadata=sMeta, dtype=np.float32, force=True)
-        else:
-            pass
-        
+    envi.save_image(savepath+'/swir_parameters.hdr',sParams,metadata=sMeta,dtype=np.float32)
 
     #--------- SWIR Browse PNG ----------------------------------------------------
     i0 = paramList.index('OLINDEX3')
     i1 = paramList.index('LCPINDEX2')
     i2 = paramList.index('HCPINDEX2')
     MAF = u.buildSummary(sParams[:,:,i0], sParams[:,:,i1], sParams[:,:,i2])
-    MAF = np.flip(u.browse2bit(u.stretchNBands(u,u.cropNZeros(u,MAF))),axis=2)
+    MAF = np.flip(u.browse2bit(u.stretchNBands(u.cropNZeros(MAF))),axis=2)
     n = '/MAF.png'
     cv2.imwrite(savepath+n, MAF)
 
@@ -107,8 +62,7 @@ if shdr != False:
     i1 = paramList.index('R1506')
     i2 = paramList.index('R1080')
     FAL = u.buildSummary(sParams[:,:,i0], sParams[:,:,i1], sParams[:,:,i2])
-    # FAL = np.flip(u.browse2bit(FAL),axis=2)
-    FAL = np.flip(u.browse2bit(u.stretchNBands(u,FAL)),axis=2)
+    FAL = np.flip(u.browse2bit(u.stretchNBands(u.cropNZeros(FAL))),axis=2)
     n = '/FAL.png'
     cv2.imwrite(savepath+n, FAL)
 
@@ -116,7 +70,7 @@ if shdr != False:
     i1 = paramList.index('BD2190')
     i2 = paramList.index('BD2165')
     PAL = u.buildSummary(sParams[:,:,i0], sParams[:,:,i1], sParams[:,:,i2])
-    PAL = np.flip(u.browse2bit(u.stretchNBands(u,u.cropNZeros(u,PAL))),axis=2)
+    PAL = np.flip(u.browse2bit(u.stretchNBands(u.cropNZeros(PAL))),axis=2)
     n = '/PAL.png'
     cv2.imwrite(savepath+n, PAL)
 
@@ -124,7 +78,7 @@ if shdr != False:
     i1 = paramList.index('D2300')
     i2 = paramList.index('BD1900r2')
     PHY = u.buildSummary(sParams[:,:,i0], sParams[:,:,i1], sParams[:,:,i2])
-    PHY = np.flip(u.browse2bit(u.stretchNBands(u,u.cropNZeros(u,PHY))),axis=2)
+    PHY = np.flip(u.browse2bit(u.stretchNBands(u.cropNZeros(PHY))),axis=2)
     n = '/PHY.png'
     cv2.imwrite(savepath+n, PHY)
 
@@ -132,7 +86,7 @@ if shdr != False:
     i1 = paramList.index('D2300')
     i2 = paramList.index('BD2290')
     PFM = u.buildSummary(sParams[:,:,i0], sParams[:,:,i1], sParams[:,:,i2])
-    PFM = np.flip(u.browse2bit(u.stretchNBands(u,u.cropNZeros(u,PFM))),axis=2)
+    PFM = np.flip(u.browse2bit(u.stretchNBands(u.cropNZeros(PFM))),axis=2)
     n = '/PFM.png'
     cv2.imwrite(savepath+n, PFM)
 
@@ -140,7 +94,7 @@ if shdr != False:
     i1 = paramList.index('MIN2345_2537')
     i2 = paramList.index('BDCARB')
     CR2 = u.buildSummary(sParams[:,:,i0], sParams[:,:,i1], sParams[:,:,i2])
-    CR2 = np.flip(u.browse2bit(u.stretchNBands(u,u.cropNZeros(u,CR2))),axis=2)
+    CR2 = np.flip(u.browse2bit(u.stretchNBands(u.cropNZeros(CR2))),axis=2)
     n = '/CR2.png'
     cv2.imwrite(savepath+n, CR2)
 
@@ -148,7 +102,7 @@ if shdr != False:
     i1 = paramList.index('BD2100_2')
     i2 = paramList.index('BD1900_2')
     HYD = u.buildSummary(sParams[:,:,i0], sParams[:,:,i1], sParams[:,:,i2])
-    HYD = np.flip(u.browse2bit(u.stretchNBands(u,u.cropNZeros(u,HYD))),axis=2)
+    HYD = np.flip(u.browse2bit(u.stretchNBands(u.cropNZeros(HYD))),axis=2)
     n = '/HYD.png'
     cv2.imwrite(savepath+n, HYD)
 
@@ -156,7 +110,7 @@ if shdr != False:
     i1 = paramList.index('BD1400')
     i2 = paramList.index('IRR2')
     CHL = u.buildSummary(sParams[:,:,i0], sParams[:,:,i1], sParams[:,:,i2])
-    CHL = np.flip(u.browse2bit(u.stretchNBands(u,u.cropNZeros(u,CHL))),axis=2)
+    CHL = np.flip(u.browse2bit(u.stretchNBands(u.cropNZeros(CHL))),axis=2)
     n = '/CHL.png'
     cv2.imwrite(savepath+n, CHL)
 
@@ -164,41 +118,9 @@ if shdr != False:
     i1 = paramList.index('BD2250')
     i2 = paramList.index('BD1900r2')
     HYS = u.buildSummary(sParams[:,:,i0], sParams[:,:,i1], sParams[:,:,i2])
-    HYS = np.flip(u.browse2bit(u.stretchNBands(u,u.cropNZeros(u,HYS))),axis=2)
+    HYS = np.flip(u.browse2bit(u.stretchNBands(u.cropNZeros(HYS))),axis=2)
     n = '/HYS.png'
     cv2.imwrite(savepath+n, HYS)
-
-    i0 = paramList.index('BD1200')
-    i1 = paramList.index('BD1450')
-    i2 = paramList.index('BD1900r2')
-    HY2 = u.buildSummary(sParams[:,:,i0], sParams[:,:,i1], sParams[:,:,i2])
-    HY2 = np.flip(u.browse2bit(u.stretchNBands(u,u.cropNZeros(u,HYS))),axis=2)
-    n = '/HY2.png'
-    cv2.imwrite(savepath+n, HY2)
-    
-    i0 = paramList.index('BD1450')
-    i1 = paramList.index('BD1900_2')
-    i2 = paramList.index('BD2100_3')
-    LIC = u.buildSummary(sParams[:,:,i0], sParams[:,:,i1], sParams[:,:,i2])
-    LIC = np.flip(u.browse2bit(u.stretchNBands(u,u.cropNZeros(u,LIC))),axis=2)
-    n = '/LIC.png'
-    cv2.imwrite(savepath+n, LIC)
-    
-    i0 = paramList.index('GypTrip')
-    i1 = paramList.index('BD2165')
-    i2 = paramList.index('BD1900_2')
-    GYP = u.buildSummary(sParams[:,:,i0], sParams[:,:,i1], sParams[:,:,i2])
-    GYP = np.flip(u.browse2bit(u.stretchNBands(u,u.cropNZeros(u,GYP))),axis=2)
-    n = '/GYP.png'
-    cv2.imwrite(savepath+n, GYP)
-    
-    i0 = paramList.index('BDCARB')
-    i1 = paramList.index('ILL')
-    i2 = paramList.index('GypTrip')
-    SED = u.buildSummary(sParams[:,:,i0], sParams[:,:,i1], sParams[:,:,i2])
-    SED = np.flip(u.browse2bit(u.stretchNBands(u,u.cropNZeros(u,SED))),axis=2)
-    n = '/SED.png'
-    cv2.imwrite(savepath+n, SED)
 
 #%% VIS parameter block
 '''
@@ -273,12 +195,12 @@ cv2.imwrite(savepath+sName,s_mnf10[:,:,bs])
 sName = '/SWIR_MNF_234_8bit.png'
 cv2.imwrite(savepath+sName,u.browse2bit(s_mnf10[:,:,bs]))
 
-bandList = ['1','2','3','4','5','6','7','8','9','10']
-sMeta = p.s_.metadata.copy()
-sMeta['wavelength'] = bandList
-sMeta['wavelength units'] = 'MNF Band'
-sMeta['default bands'] = ['1', '2', '3']
-envi.save_image(savepath+'/SWIR_MNF.hdr', s_mnf10, metadata=sMeta,dtype=np.float32)
+# bandList = ['1','2','3','4','5','6','7','8','9','10']
+# sMeta = p.s_.metadata.copy()
+# sMeta['wavelength'] = bandList
+# sMeta['wavelength units'] = 'MNF Band'
+# sMeta['default bands'] = ['1', '2', '3']
+# envi.save_image(savepath+'/SWIR_MNF.hdr', s_mnf10, metadata=sMeta,dtype=np.float32)
 
 
 #Vis
@@ -289,18 +211,18 @@ cv2.imwrite(savepath+vName,v_mnf10[:,:,bs])
 vName = '/VNIR_MNF_234_8bit.png'
 cv2.imwrite(savepath+vName,u.browse2bit(v_mnf10[:,:,bs]))
 
-bandList = ['1','2','3','4','5','6','7','8','9','10']
-vMeta = p.v_.metadata.copy()
-vMeta['wavelength'] = bandList
-vMeta['wavelength units'] = 'MNF Band'
-vMeta['default bands'] = ['1', '2', '3']
-envi.save_image(savepath+'/VIS_MNF.hdr', v_mnf10, metadata=vMeta,dtype=np.float32)
+# bandList = ['1','2','3','4','5','6','7','8','9','10']
+# vMeta = p.v_.metadata.copy()
+# vMeta['wavelength'] = bandList
+# vMeta['wavelength units'] = 'MNF Band'
+# vMeta['default bands'] = ['1', '2', '3']
+# envi.save_image(savepath+'/VIS_MNF.hdr', v_mnf10, metadata=vMeta,dtype=np.float32)
 
 #%% browse block
 '''
 generate one-off browse product images (as PNG files)
 '''
-savepath = '/Users/phillms1/Documents/Work/RAVEN/RAVEN_parameters/hyspex_parameters/BrowseProducts/'
+savepath = '/Users/phillms1/Documents/Work/RAVEN/RAVEN_parameters/hyspex_parameters/BrowseProducts/'+date_path
 if os.path.isdir(savepath) is False:
     os.mkdir(savepath)
 
@@ -366,3 +288,13 @@ cv2.imwrite(savepath+n,img)
 del(img)
 
 
+#%% utilities
+
+# crop metadata
+vCropMeta = p.v_.metadata.copy()
+vCropMeta['lines']=np.shape(vCrop)[1]
+vCropMeta['samples']=np.shape(vCrop)[0]
+
+sCropMeta = p.s_.metadata.copy()
+sCropMeta['lines']=np.shape(sCrop)[1]
+sCropMeta['samples']=np.shape(sCrop)[0]
