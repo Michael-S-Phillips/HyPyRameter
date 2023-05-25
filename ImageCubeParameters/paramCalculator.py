@@ -31,7 +31,7 @@ class paramCalculator:
         
     '''
     
-    def __init__(self, outdir, vfile=False, sfile=False,crop=False,bbl=[None],denoise=False):
+    def __init__(self, outdir, vfile=False, sfile=False, jfile = False, crop=False,bbl=[None],denoise=False):
         tic = timeit.default_timer()
         if vfile != False:
             self.vfile = vfile
@@ -41,16 +41,23 @@ class paramCalculator:
             self.sfile = sfile
             print('loading swir object using spectral')
             self.s_ = envi.open(sfile) 
+        if jfile != False:
+            self.jfile = jfile
+            print(f'loading {jfile}]using spectral')
+            self.j_ = envi.open(jfile) 
         self.outdir = outdir
         print('\tobjects loaded\nloading data')
         
-        # load wave tables
+        # load wave tables and data
         if vfile != False:
             self.v_bands = [float(b) for b in self.v_.metadata['wavelength']]
             if 'default bands' in self.v_.metadata:
                 self.v_preview_bands = [int(float(b)) for b in self.v_.metadata['default bands']]
             # loading vnir data
-            self.v = np.flip(np.transpose(self.v_.load(),(1,0,2)),axis=0)
+            else:  
+                self.v_preview_bands = [39, 23, 4]
+            # self.v = np.flip(np.transpose(self.v_.load(),(1,0,2)),axis=0)
+            self.v = np.array(self.v_.load())
             print('\tdata loaded')
             if crop != False:
                 r0,r1,c0,c1 = crop
@@ -75,6 +82,23 @@ class paramCalculator:
                 gbl = [i for i,b in enumerate(abl) if i not in bbl]
                 self.s = self.s[:,:,gbl]
                 self.s_bands = [b for i,b in enumerate(self.s_bands) if i in gbl]
+            if denoise == True:
+                print('denoising cube')
+                self.denoiser(1)
+                
+        if jfile != False:
+            self.j_bands = [float(b) for b in self.j_.metadata['wavelength']]
+            if 'default bands' in self.j_.metadata:
+                self.j_preview_bands = [int(float(b)) for b in self.j_.metadata['default bands']]
+            # loading vnir data
+            else:  
+                self.j_preview_bands = [39, 23, 4]
+            # self.v = np.flip(np.transpose(self.v_.load(),(1,0,2)),axis=0)
+            self.j = np.array(self.j_.load())
+            print('\tdata loaded')
+            if crop != False:
+                r0,r1,c0,c1 = crop
+                self.j = self.j[r0:r1,c0:c1,:]
             if denoise == True:
                 print('denoising cube')
                 self.denoiser(1)
@@ -145,18 +169,29 @@ class paramCalculator:
             else:
                 choice = input('type 3 bands to display as a list\n\tlike this [55, 30, 10]')
                 self.v_preview_bands = choice
-            v_preview = [(r-np.min(r))/(np.max(r)-np.min(r)) for r in v_preview]
+                v_preview = self.v[:,:,self.v_preview_bands]
+            v_preview = [(r-np.nanmin(r))/(np.nanmax(r)-np.nanmin(r)) for r in v_preview]
             plt.imshow(v_preview)
         if hasattr(self, 's'):
             plt.title('SWIR Preview')
             if hasattr(self, 's_preview_bands'):
-                s_preview = self.v[:,:,self.s_preview_bands]
+                s_preview = self.s[:,:,self.s_preview_bands]
             else:
                 choice = input('type 3 bands to display as a list\n\tlike this [55, 30, 10]')
                 self.s_preview_bands = choice
             s_preview = self.s[:,:,self.s_preview_bands]
             s_preview = [(r-np.min(r))/(np.max(r)-np.min(r)) for r in s_preview]
             plt.imshow(s_preview)
+        if hasattr(self, 'j'):
+            plt.title('Preview')
+            if hasattr(self, 'j_preview_bands'):
+                j_preview = self.j[:,:,self.j_preview_bands]
+            else:
+                choice = input('type 3 bands to display as a list\n\tlike this [55, 30, 10]')
+                self.j_preview_bands = choice
+                j_preview = self.j[:,:,self.j_preview_bands]
+            j_preview = [(r-np.nanmin(r))/(np.nanmax(r)-np.nanmin(r)) for r in j_preview]
+            plt.imshow(j_preview)
         plt.show()
 
     # -------------------------------------------------------------------------
@@ -165,8 +200,12 @@ class paramCalculator:
     # parameter library
     # -------------------------------------------------------------------------
     def HCPINDEX2(self):
-        cube = self.s
-        wvt = self.s_bands
+        if hasattr(self, 's'):
+            cube = self.s
+            wvt = self.s_bands
+        elif hasattr(self, 'j'):
+            cube = self.j
+            wvt = self.j_bands
         # extract data from image cube
         R2120 = u.getBand(cube, wvt,2120)
         R2140 = u.getBand(cube, wvt,2140)
@@ -204,8 +243,12 @@ class paramCalculator:
         img = np.where(img>-np.inf,img,nmin)
         return img
     def LCPINDEX2(self):
-        cube=self.s
-        wvt=self.s_bands
+        if hasattr(self, 's'):
+            cube = self.s
+            wvt = self.s_bands
+        elif hasattr(self, 'j'):
+            cube = self.j
+            wvt = self.j_bands
         # extract data from image cube
         R1690 = u.getBand(cube, wvt, 1690)
         R1750 = u.getBand(cube, wvt, 1750)
@@ -236,8 +279,12 @@ class paramCalculator:
         img = np.where(img>-np.inf,img,nmin)
         return img
     def OLINDEX3(self):
-        cube=self.s
-        wvt=self.s_bands
+        if hasattr(self, 's'):
+            cube = self.s
+            wvt = self.s_bands
+        elif hasattr(self, 'j'):
+            cube = self.j
+            wvt = self.j_bands
         # extract data from image cube
         R1210 = u.getBand(cube, wvt,1210)
         R1250 = u.getBand(cube, wvt,1250)
@@ -272,8 +319,12 @@ class paramCalculator:
         return img
     # old, but functional, RPEAK1
     def RPEAK1(self):
-        cube = self.v
-        wvt = self.v_bands
+        if hasattr(self, 'v'):
+            cube = self.v
+            wvt = self.v_bands
+        elif hasattr(self, 'j'):
+            cube = self.j
+            wvt = self.j_bands
         rp_wv = [442,533,600,710,740,775,800,833,860,892,925,963]
         rp_i = [wvt.index(u.getClosestWavelength(i,wvt)) for i in rp_wv]
         rp_w = [u.getClosestWavelength(i,wvt) for i in rp_wv]
@@ -315,8 +366,13 @@ class paramCalculator:
         return rp_l,rp_r
     
     def BDI1000VIS(self,rp_r=None):
-        cube = self.v
-        wvt = self.v_bands
+        if hasattr(self, 'v'):
+            cube = self.v
+            wvt = self.v_bands
+        elif hasattr(self, 'j'):
+            cube = self.j
+            wvt = self.j_bands
+            
         if rp_r is None:
             rp_l, rp_r = self.RPEAK1()
             
@@ -351,7 +407,7 @@ class paramCalculator:
             args.append((wv_um_,spec_vec_,4))
         print('\treturning integrated polynomial values')
         with mp.Pool(6) as pool:
-            for integ in pool.imap(getPolyInt,args,chunksize=None):
+            for integ in pool.imap(getPolyInt,args):
                 bdi1000vis_value.append(integ)
         
         print('\treshaping array')
@@ -371,25 +427,42 @@ class paramCalculator:
         #             bdi1000vis_value[i,j] = np.nan
         return bdi1000vis_value
     def SH460(self):
-        cube = self.v
-        wvt = self.v_bands
+        if hasattr(self, 'v'):
+            cube = self.v
+            wvt = self.v_bands
+        elif hasattr(self, 'j'):
+            cube = self.j
+            wvt = self.j_bands
+            
         img = u.getBandDepthInvert(u, cube, wvt, 420, 460, 520)
         return img
     def BD530_2(self):
-        cube = self.v
-        wvt = self.v_bands
+        if hasattr(self, 'v'):
+            cube = self.v
+            wvt = self.v_bands
+        elif hasattr(self, 'j'):
+            cube = self.j
+            wvt = self.j_bands
         img = u.getBandDepth(u, cube, wvt, 440, 530, 614)
         return img
     def BD670(self):
         # this is a custom parameter
-        cube = self.v
-        wvt = self.v_bands
+        if hasattr(self, 'v'):
+            cube = self.v
+            wvt = self.v_bands
+        elif hasattr(self, 'j'):
+            cube = self.j
+            wvt = self.j_bands
         img = u.getBandDepth(u, cube, wvt, 620, 670, 745)
         return img
     def D700(self):
         # a custom parameter for chlorophyll
-        cube = self.v
-        wvt = self.v_bands
+        if hasattr(self, 'v'):
+            cube = self.v
+            wvt = self.v_bands
+        elif hasattr(self, 'j'):
+            cube = self.j
+            wvt = self.j_bands
         
         # extract individual channels
         R630 = u.getBand(cube,wvt,630)
@@ -427,19 +500,34 @@ class paramCalculator:
         return img
     def BD875(self):
         # this is a custom parameter
-        cube = self.v
-        wvt = self.v_bands
+        if hasattr(self, 'v'):
+            cube = self.v
+            wvt = self.v_bands
+        elif hasattr(self, 'j'):
+            cube = self.j
+            wvt = self.j_bands
+            
         img = u.getBandDepth(u, cube, wvt, 747, 875, 980)
         return img
     def BD920_2(self):
-        cube = self.v
-        wvt = self.v_bands
+        if hasattr(self, 'v'):
+            cube = self.v
+            wvt = self.v_bands
+        elif hasattr(self, 'j'):
+            cube = self.j
+            wvt = self.j_bands
+            
         img = u.getBandDepth(u, cube,wvt,807,920,984)
         return img
     def ELMSUL(self):
         # this is a custom parameter
-        cube = self.v
-        wvt = self.v_bands
+        if hasattr(self, 'v'):
+            cube = self.v
+            wvt = self.v_bands
+        elif hasattr(self, 'j'):
+            cube = self.j
+            wvt = self.j_bands
+            
         R400 = u.getBand(cube, wvt, 400,kwidth=1)
         R430 = u.getBand(cube, wvt, 430)
         R525 = u.getBand(cube, wvt, 525)
@@ -455,44 +543,72 @@ class paramCalculator:
         img = s2-(s1+s3)
         return img, s3
     def BD2210_2(self):
-        cube = self.s
-        wvt = self.s_bands
+        if hasattr(self, 's'):
+            cube = self.s
+            wvt = self.s_bands
+        elif hasattr(self, 'j'):
+            cube = self.j
+            wvt = self.j_bands
         # img = u.getBandDepth(u,cube,wvt,2165,2210,2290) #(kaolinite group)
         img = u.getBandArea(u, cube, wvt, 2165, 2290)
         return img
     def BD2190(self):
-        cube = self.s
-        wvt = self.s_bands
+        if hasattr(self, 's'):
+            cube = self.s
+            wvt = self.s_bands
+        elif hasattr(self, 'j'):
+            cube = self.j
+            wvt = self.j_bands
         # img = u.getBandDepth(u,cube,wvt,2120,2185,2250,mw=3,hw=3) #(Beidellite, Allophane)
         img = u.getBandArea(u, cube, wvt, 2120, 2250)
         return img
     def BD2250(self):
-        cube = self.s
-        wvt = self.s_bands
+        if hasattr(self, 's'):
+            cube = self.s
+            wvt = self.s_bands
+        elif hasattr(self, 'j'):
+            cube = self.j
+            wvt = self.j_bands
         # img = u.getBandDepth(u,cube,wvt,2120, 2245, 2340,mw=7,hw=3) 
         img = u.getBandArea(u, cube, wvt, 2120, 2340)
         return img
     def BD2165(self):
-        cube = self.s
-        wvt = self.s_bands
+        if hasattr(self, 's'):
+            cube = self.s
+            wvt = self.s_bands
+        elif hasattr(self, 'j'):
+            cube = self.j
+            wvt = self.j_bands
         # img = u.getBandDepth(u,cube,wvt,2120,2165,2230,mw=3,hw=3) #(kaolinite group)
         img = u.getBandArea(u, cube, wvt, 2120, 2230)
         return img
     def BD2355(self):
-        cube = self.s
-        wvt = self.s_bands
+        if hasattr(self, 's'):
+            cube = self.s
+            wvt = self.s_bands
+        elif hasattr(self, 'j'):
+            cube = self.j
+            wvt = self.j_bands
         # img = u.getBandDepth(u,cube,wvt,2300, 2355, 2450) #(fe/mg phyllo group)
         img = u.getBandArea(u, cube, wvt, 2300, 2450)
         return img
     def BD2290(self):
-        cube = self.s
-        wvt = self.s_bands
+        if hasattr(self, 's'):
+            cube = self.s
+            wvt = self.s_bands
+        elif hasattr(self, 'j'):
+            cube = self.j
+            wvt = self.j_bands
         # img = u.getBandDepth(u,cube,wvt,2250, 2290, 2350) #(fe/mg phyllo group)
         img = u.getBandArea(u, cube, wvt, 2210, 2350)
         return img
     def D2200(self):
-        cube = self.s
-        wvt = self.s_bands
+        if hasattr(self, 's'):
+            cube = self.s
+            wvt = self.s_bands
+        elif hasattr(self, 'j'):
+            cube = self.j
+            wvt = self.j_bands
         
         # extract individual channels
         R1815 = u.getBand(cube, wvt,1815, kwidth=5)
@@ -521,8 +637,12 @@ class paramCalculator:
         img = np.where(img>-np.inf,img,nmin)
         return img
     def D2300(self):
-        cube = self.s
-        wvt = self.s_bands
+        if hasattr(self, 's'):
+            cube = self.s
+            wvt = self.s_bands
+        elif hasattr(self, 'j'):
+            cube = self.j
+            wvt = self.j_bands
         # extract individual channels
         R1815 = u.getBand(cube,wvt,1815)
         R2120 = u.getBand(cube,wvt,2120)
@@ -558,8 +678,13 @@ class paramCalculator:
         img = np.where(img>-np.inf,img,nmin) 
         return img
     def BD1900r2(self):
-        cube = self.s
-        wvt = self.s_bands
+        if hasattr(self, 's'):
+            cube = self.s
+            wvt = self.s_bands
+        elif hasattr(self, 'j'):
+            cube = self.j
+            wvt = self.j_bands
+            
         img = u.getBandArea(u, cube, wvt, 1800, 2000)
         # extract individual channels, replacing CRISM_NANs with IEEE_NaNs
         # R1908 = u.getBand(cube,wvt,1908, kwidth = 1) 
@@ -614,10 +739,16 @@ class paramCalculator:
         # img = np.where(img>-np.inf,img,nmin)
         return img
     def MIN2295_2480(self):
-        cube = self.s
-        wvt = self.s_bands
-        img1 = u.getBandDepth(u,cube, wvt,2165,2295,2364)
-        img2 = u.getBandDepth(u,cube,wvt,2364,2480,2570)
+        if hasattr(self, 's'):
+            cube = self.s
+            wvt = self.s_bands
+        elif hasattr(self, 'j'):
+            cube = self.j
+            wvt = self.j_bands
+        # img1 = u.getBandDepth(u,cube, wvt,2165,2295,2364)
+        # img2 = u.getBandDepth(u,cube,wvt,2364,2480,2570)
+        img1 = u.getBandArea(u,cube, wvt,2165,2295,2364)
+        img2 = u.getBandArea(u,cube,wvt,2364,2480,2570)
         img3 = np.empty((np.shape(img1)[0],np.shape(img1)[1],2))
         img3[:,:,0] = img1
         img3[:,:,1] = img2
@@ -626,10 +757,16 @@ class paramCalculator:
         img = np.where(img>-np.inf,img,nmin)
         return img
     def MIN2250(self):
-        cube = self.s
-        wvt = self.s_bands
-        img1 = u.getBandDepth(u,cube, wvt,2165, 2210, 2350)
-        img2 = u.getBandDepth(u,cube,wvt,2165, 2265, 2350)
+        if hasattr(self, 's'):
+            cube = self.s
+            wvt = self.s_bands
+        elif hasattr(self, 'j'):
+            cube = self.j
+            wvt = self.j_bands
+        # img1 = u.getBandDepth(u,cube, wvt,2165, 2210, 2350)
+        # img2 = u.getBandDepth(u,cube,wvt,2165, 2265, 2350)
+        img1 = u.getBandArea(u,cube, wvt,2165, 2210, 2350)
+        img2 = u.getBandArea(u,cube,wvt,2165, 2265, 2350)
         img3 = np.empty((np.shape(img1)[0],np.shape(img1)[1],2))
         img3[:,:,0] = img1
         img3[:,:,1] = img2
@@ -638,10 +775,16 @@ class paramCalculator:
         img = np.where(img>-np.inf,img,nmin)
         return img
     def MIN2345_2537(self):
-        cube = self.s
-        wvt = self.s_bands
-        img1 = u.getBandDepth(u,cube, wvt,2250, 2345, 2430)
-        img2 = u.getBandDepth(u,cube,wvt,2430, 2537, 2602)
+        if hasattr(self, 's'):
+            cube = self.s
+            wvt = self.s_bands
+        elif hasattr(self, 'j'):
+            cube = self.j
+            wvt = self.j_bands
+        # img1 = u.getBandDepth(u,cube, wvt,2250, 2345, 2430)
+        # img2 = u.getBandDepth(u,cube,wvt,2430, 2537, 2602)
+        img1 = u.getBandArea(u,cube, wvt,2250, 2345, 2430)
+        img2 = u.getBandArea(u,cube,wvt,2430, 2537, 2602)
         img3 = np.empty((np.shape(img1)[0],np.shape(img1)[1],2))
         img3[:,:,0] = img1
         img3[:,:,1] = img2
@@ -650,8 +793,12 @@ class paramCalculator:
         img = np.where(img>-np.inf,img,nmin)
         return img    
     def BDCARB(self):
-        cube = self.s
-        wvt = self.s_bands
+        if hasattr(self, 's'):
+            cube = self.s
+            wvt = self.s_bands
+        elif hasattr(self, 'j'):
+            cube = self.j
+            wvt = self.j_bands
         b1 = u.getBandArea(u,cube,wvt,2220,2375)
         b2 = u.getBandArea(u,cube,wvt,2400,2500)
         img = b1+b2
@@ -683,26 +830,42 @@ class paramCalculator:
         # img = np.where(img>-np.inf,img,nmin)
         return img
     def SINDEX2(self):
-        cube = self.s
-        wvt = self.s_bands
+        if hasattr(self, 's'):
+            cube = self.s
+            wvt = self.s_bands
+        elif hasattr(self, 'j'):
+            cube = self.j
+            wvt = self.j_bands
         # img = u.getBandDepthInvert(u,cube,wvt,2120, 2290, 2400,mw=7,hw=3)
         img = u.getBandAreaInvert(u,cube,wvt, 2120, 2400, hw=3)
         return img
     def BD2100_2(self):
-        cube = self.s
-        wvt = self.s_bands
+        if hasattr(self, 's'):
+            cube = self.s
+            wvt = self.s_bands
+        elif hasattr(self, 'j'):
+            cube = self.j
+            wvt = self.j_bands
         # img = u.getBandDepth(u,cube,wvt,1930, 2132, 2250,lw=3,hw=3)
         img = u.getBandArea(u, cube, wvt, 1930, 2250)
         return img
     def BD1900_2(self):
-        cube = self.s
-        wvt = self.s_bands
+        if hasattr(self, 's'):
+            cube = self.s
+            wvt = self.s_bands
+        elif hasattr(self, 'j'):
+            cube = self.j
+            wvt = self.j_bands
         # img = u.getBandDepth(u,cube,wvt,1850, 1930, 2067)
         img = u.getBandArea(u, cube, wvt, 1850, 2067)
         return img
     def ISLOPE(self):
-        cube = self.s
-        wvt = self.s_bands
+        if hasattr(self, 's'):
+            cube = self.s
+            wvt = self.s_bands
+        elif hasattr(self, 'j'):
+            cube = self.j
+            wvt = self.j_bands
         # extract individual bands
         R1815 = u.getBand(cube, wvt, 1815)
         R2530 = u.getBand(cube, wvt, 2530)
@@ -716,35 +879,59 @@ class paramCalculator:
         img = np.where(img>-np.inf,img,nmin)
         return img
     def BD1400(self):
-        cube = self.s
-        wvt = self.s_bands
+        if hasattr(self, 's'):
+            cube = self.s
+            wvt = self.s_bands
+        elif hasattr(self, 'j'):
+            cube = self.j
+            wvt = self.j_bands
         # img = u.getBandDepth(u, cube, wvt, 1330, 1395, 1467, mw=3)
         img = u.getBandArea(u, cube, wvt, 1330, 1620)
         return img
     def BD1200(self):
-        cube = self.s
-        wvt = self.s_bands
+        if hasattr(self, 's'):
+            cube = self.s
+            wvt = self.s_bands
+        elif hasattr(self, 'j'):
+            cube = self.j
+            wvt = self.j_bands
         img = u.getBandArea(u, cube, wvt, 1115, 1260)
         return img
     def BD1450(self):
-        cube = self.s
-        wvt = self.s_bands
+        if hasattr(self, 's'):
+            cube = self.s
+            wvt = self.s_bands
+        elif hasattr(self, 'j'):
+            cube = self.j
+            wvt = self.j_bands
         # img = u.getBandDepth(u, cube, wvt, 1340, 1450, 1535, mw=3)
         img = u.getBandArea(u, cube, wvt, 1340, 1535)
         return img
     def BD2100_3(self):
-        cube = self.s
-        wvt = self.s_bands
+        if hasattr(self, 's'):
+            cube = self.s
+            wvt = self.s_bands
+        elif hasattr(self, 'j'):
+            cube = self.j
+            wvt = self.j_bands
         img = u.getBandArea(u, cube, wvt, 2016, 2220)
         return img
     def BD1750(self):
-        cube = self.s
-        wvt = self.s_bands
+        if hasattr(self, 's'):
+            cube = self.s
+            wvt = self.s_bands
+        elif hasattr(self, 'j'):
+            cube = self.j
+            wvt = self.j_bands
         img = u.getBandArea(u, cube, wvt, 1688, 1820)
         return img
     def GypTrip(self):
-        cube = self.s
-        wvt = self.s_bands
+        if hasattr(self, 's'):
+            cube = self.s
+            wvt = self.s_bands
+        elif hasattr(self, 'j'):
+            cube = self.j
+            wvt = self.j_bands
         t1 = u.getBandArea(u,cube,wvt,1420,1463)
         t2 = u.getBandArea(u,cube,wvt,1463,1515)
         t3 = u.getBandArea(u,cube,wvt,1515,1576)
@@ -753,15 +940,23 @@ class paramCalculator:
         img = b1+b2
         return img
     def ILL(self):
-        cube = self.s
-        wvt = self.s_bands
+        if hasattr(self, 's'):
+            cube = self.s
+            wvt = self.s_bands
+        elif hasattr(self, 'j'):
+            cube = self.j
+            wvt = self.j_bands
         a1 = u.getBandArea(u,cube,wvt,2160,2273)
         # a2 = u.getBandArea(u,cube,wvt,2280,2375)
         img = a1
         return img
     def IRR2(self):
-        cube = self.s
-        wvt = self.s_bands
+        if hasattr(self, 's'):
+            cube = self.s
+            wvt = self.s_bands
+        elif hasattr(self, 'j'):
+            cube = self.j
+            wvt = self.j_bands
         img = u.getBandRatio(u,cube,wvt,2530,2210)
         return img
 
@@ -969,6 +1164,9 @@ class paramCalculator:
     # All Parameters 
     # -------------------------------------------------------------------------
     def calculateSwirParams(self):
+        if hasattr(self, 'j'):
+            self.s = self.j.copy()
+            self.s_bands = self.j_bands.copy()
         # SWIR Params
         tic = timeit.default_timer()
         print('\rcalculating OLINDEX3')
@@ -1066,6 +1264,10 @@ class paramCalculator:
         return img
     
     def calculateVisParams(self):
+        if hasattr(self, 'j'):
+            self.v = self.j.copy()
+            self.v_bands = self.j_bands.copy()
+        
         # VNIR PARAMETERS
         tic = timeit.default_timer()
         print('\rcalculating R637')

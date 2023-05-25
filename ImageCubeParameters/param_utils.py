@@ -40,13 +40,14 @@ class utility_functions:
         print('utilities on')
     
     def getBandArea(self, cube, wvt, low, high, lw=5, hw=5):
-        # this isn't really band area... it's average height 
+        # this isn't really band area... it's average band depth 
         y1 = self.getBand(cube, wvt, low, kwidth=lw)
         x1 = self.getClosestWavelength(low, wvt)
         y2 = self.getBand(cube, wvt, high, kwidth=hw)
         x2 = self.getClosestWavelength(high, wvt)
         m = (y2-y1)/(x2-x1) #m is the slope at all pixels
         b = y2-m*x2         #b is the intercept at all pixels
+        # breakpoint()
         woi = np.linspace(wvt.index(x1),wvt.index(x2),wvt.index(x2)-wvt.index(x1)+1,dtype=int).tolist()
         h = np.zeros(y1.shape,dtype=np.float32)
         for i in woi:

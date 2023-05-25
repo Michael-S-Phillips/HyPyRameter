@@ -13,7 +13,7 @@ from paramCalculator import paramCalculator
 from readSed import *
 from readLibrary import *
 
-date_ = '220802'
+date_ = '220714'
 sol_ = 'Sol106'
 mission_ = 'LabSamples'
 rootPath = f'/Volumes/HySpex_Back/RAVEN/FieldSeason_2022/oreXpress/{date_}/{mission_}/'
