@@ -222,7 +222,7 @@ cv2.imwrite(savepath+vName,u.browse2bit(v_mnf10[:,:,bs]))
 '''
 generate one-off browse product images (as PNG files)
 '''
-savepath = '/Users/phillms1/Documents/Work/RAVEN/RAVEN_parameters/hyspex_parameters/BrowseProducts/'+date_path
+savepath = data_path + '/BrowseProducts/' + date_path
 if os.path.isdir(savepath) is False:
     os.mkdir(savepath)
 

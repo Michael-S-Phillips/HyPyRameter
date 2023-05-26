@@ -24,7 +24,7 @@ from interpNans import interpNaNs
 #%% data ingestion and paramCalculator initiation
 
 # Path to your data directory
-data_path = os.path.abspath(os.path.join('/Users/phillms1/Documents/Work/RAVEN/HyPyRameter/data'))
+data_path = os.path.abspath(os.path.join('../../data/HyPyRameter/data'))
 
 # path to your ENVI .hdr file. For VNIR (400-1000 nm) files use vhdr, for SWIR (1000-2600 nm) files use shdr 
 file_name = 'EMIT_L2A_RFL_001_20230329T145406_2308809_052_reflectance_cropped'
@@ -476,42 +476,42 @@ if jhdr != False:
 '''
 calculate minimum noise fraction transform images and save as PNG and ENVI .img
 '''
-#SWIR
-s_mnf10 = p.SWIR_MNF()
-bs = [4,3,2] #because cv2 writes BGR for some reason
-sName = '/SWIR_MNF_234.png'
-cv2.imwrite(savepath+sName,s_mnf10[:,:,bs])
-sName = '/SWIR_MNF_234_8bit.png'
-cv2.imwrite(savepath+sName,u.browse2bit(s_mnf10[:,:,bs]))
+# #SWIR
+# s_mnf10 = p.SWIR_MNF()
+# bs = [4,3,2] #because cv2 writes BGR for some reason
+# sName = '/SWIR_MNF_234.png'
+# cv2.imwrite(savepath+sName,s_mnf10[:,:,bs])
+# sName = '/SWIR_MNF_234_8bit.png'
+# cv2.imwrite(savepath+sName,u.browse2bit(s_mnf10[:,:,bs]))
 
-bandList = ['1','2','3','4','5','6','7','8','9','10']
-sMeta = p.s_.metadata.copy()
-sMeta['wavelength'] = bandList
-sMeta['wavelength units'] = 'MNF Band'
-sMeta['default bands'] = ['1', '2', '3']
-envi.save_image(savepath+'/SWIR_MNF.hdr', s_mnf10, metadata=sMeta,dtype=np.float32)
+# bandList = ['1','2','3','4','5','6','7','8','9','10']
+# sMeta = p.s_.metadata.copy()
+# sMeta['wavelength'] = bandList
+# sMeta['wavelength units'] = 'MNF Band'
+# sMeta['default bands'] = ['1', '2', '3']
+# envi.save_image(savepath+'/SWIR_MNF.hdr', s_mnf10, metadata=sMeta,dtype=np.float32)
 
 
-#Vis
-v_mnf10 = p.VIS_MNF()
-bs = [4,3,2]
-vName = '/VNIR_MNF_234.png'
-cv2.imwrite(savepath+vName,v_mnf10[:,:,bs])
-vName = '/VNIR_MNF_234_8bit.png'
-cv2.imwrite(savepath+vName,u.browse2bit(v_mnf10[:,:,bs]))
+# #Vis
+# v_mnf10 = p.VIS_MNF()
+# bs = [4,3,2]
+# vName = '/VNIR_MNF_234.png'
+# cv2.imwrite(savepath+vName,v_mnf10[:,:,bs])
+# vName = '/VNIR_MNF_234_8bit.png'
+# cv2.imwrite(savepath+vName,u.browse2bit(v_mnf10[:,:,bs]))
 
-bandList = ['1','2','3','4','5','6','7','8','9','10']
-vMeta = p.v_.metadata.copy()
-vMeta['wavelength'] = bandList
-vMeta['wavelength units'] = 'MNF Band'
-vMeta['default bands'] = ['1', '2', '3']
-envi.save_image(savepath+'/VIS_MNF.hdr', v_mnf10, metadata=vMeta,dtype=np.float32)
+# bandList = ['1','2','3','4','5','6','7','8','9','10']
+# vMeta = p.v_.metadata.copy()
+# vMeta['wavelength'] = bandList
+# vMeta['wavelength units'] = 'MNF Band'
+# vMeta['default bands'] = ['1', '2', '3']
+# envi.save_image(savepath+'/VIS_MNF.hdr', v_mnf10, metadata=vMeta,dtype=np.float32)
 
 #%% browse block
 '''
 generate one-off browse product images (as PNG files)
 '''
-savepath = '/Users/phillms1/Documents/Work/RAVEN/RAVEN_parameters/hyspex_parameters/BrowseProducts/'
+savepath = data_path + '/BrowseProducts/'
 if os.path.isdir(savepath) is False:
     os.mkdir(savepath)
 

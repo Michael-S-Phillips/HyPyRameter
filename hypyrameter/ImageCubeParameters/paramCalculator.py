@@ -7,7 +7,11 @@ Created on Sun Jul 10 13:33:42 2022
 """
 import numpy as np
 import timeit
-import matlab.engine
+try:
+    import matlab.engine
+except ImportError:
+    print('matlab engine not found')
+    pass
 import os
 from matplotlib import pyplot as plt 
 import spectral.io.envi as envi
