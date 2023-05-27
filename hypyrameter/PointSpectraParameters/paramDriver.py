@@ -9,7 +9,7 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from paramCalculator import paramCalculator
+from paramCalculator import oreXpressParamCalculator
 from readSed import *
 from readLibrary import *
 
@@ -49,7 +49,7 @@ pdf_ = np.empty((len(paramNames),len(specNames)))
 i = 0
 for spectrum in specNames:
     
-    opc = paramCalculator(wvt,spectra.loc[:,spectrum])
+    opc = oreXpressParamCalculator(wvt,spectra.loc[:,spectrum])
     pdf_[0,i] = opc.OLINDEX3()
     pdf_[1,i] = opc.LCPINDEX2()
     pdf_[2,i] = opc.HCPINDEX2()
@@ -92,7 +92,7 @@ paramDF = pd.DataFrame(pdf_,columns=specNames)
 
 
 #%% plot cell
-import os
+
 # dateStr = '220724' #YYMMDD
 # figSavePath = rootPath+'Output/'+dateStr+'/'
 figSavePath = rootPath+f'{target_}/ParameterOutput/'
@@ -118,7 +118,6 @@ for i in range(np.shape(paramDF)[1]):
 
 
 #%% Nathan's spectra cell
-import os
 # dateStr = '220724' #YYMMDD
 # figSavePath = rootPath+'Output/'+dateStr+'/'
 figSavePath = rootPath+f'{target_}/ParameterOutput/'

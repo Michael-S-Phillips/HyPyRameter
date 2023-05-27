@@ -7,8 +7,7 @@ Created on Tue Jul 12 12:59:05 2022
 """
 
 import numpy as np
-import pandas as pd
-from utils import utility_functions as u
+import utils as u
 
 class oreXpressParamCalculator:
     '''
@@ -302,8 +301,8 @@ class oreXpressParamCalculator:
         R2120 = u.getRvalue(spectrum,wvt,2120, kwidth = 1) 
         R2126 = u.getRvalue(spectrum,wvt,2126, kwidth = 1) 
         
-        R1815 = u.getRvalue(spectrum, wvt, 1815);
-        R2132 = u.getRvalue(spectrum, wvt, 2132); 
+        R1815 = u.getRvalue(spectrum, wvt, 1815)
+        R2132 = u.getRvalue(spectrum, wvt, 2132)
         
         # retrieve the CRISM wavelengths nearest the requested values
         W1908 = u.getClosestWavelength(1908, wvt)
@@ -449,7 +448,7 @@ class oreXpressParamCalculator:
     #     p1 = self.OLINDEX3()
     #     p2 = self.LCPINDEX2()
     #     p3 = self.HCPINDEX2()
-    #     if norm is True:
+    #     if norm:
     #         p1 = normalizeParameter(p1)
     #         p2 = normalizeParameter(p2)
     #         p3 = normalizeParameter(p3)
@@ -463,7 +462,7 @@ class oreXpressParamCalculator:
     #     p1 = self.BD530_2()
     #     p2 = self.BD920_2()
     #     p3 = self.BDI1000VIS()
-    #     if norm is True:
+    #     if norm:
     #         p1 = normalizeParameter(p1)
     #         p2 = normalizeParameter(p2)
     #         p3 = normalizeParameter(p3)
@@ -477,7 +476,7 @@ class oreXpressParamCalculator:
     #     p1 = getRvalue(self.s,self.s_bands,2529)
     #     p2 = getRvalue(self.s,self.s_bands,1506)
     #     p3 = getRvalue(self.s,self.s_bands,1080)
-    #     if norm is True:
+    #     if norm:
     #         p1 = normalizeParameter(p1)
     #         p2 = normalizeParameter(p2)
     #         p3 = normalizeParameter(p3)
@@ -491,7 +490,7 @@ class oreXpressParamCalculator:
     #     p1 = self.BD2210_2()
     #     p2 = self.BD2190()
     #     p3 = self.BD2165()
-    #     if norm is True:
+    #     if norm:
     #         p1 = normalizeParameter(p1)
     #         p2 = normalizeParameter(p2)
     #         p3 = normalizeParameter(p3)
@@ -505,7 +504,7 @@ class oreXpressParamCalculator:
     #     p1 = self.D2200()
     #     p2 = self.D2300()
     #     p3 = self.BD1900r2()
-    #     if norm is True:
+    #     if norm:
     #         p1 = normalizeParameter(p1)
     #         p2 = normalizeParameter(p2)
     #         p3 = normalizeParameter(p3)
@@ -519,7 +518,7 @@ class oreXpressParamCalculator:
     #     p1 = self.BD2355()
     #     p2 = self.D2300()
     #     p3 = self.BD2290()
-    #     if norm is True:
+    #     if norm:
     #         p1 = normalizeParameter(p1)
     #         p2 = normalizeParameter(p2)
     #         p3 = normalizeParameter(p3)
@@ -533,7 +532,7 @@ class oreXpressParamCalculator:
     #     p1 = self.MIN2295_2480()
     #     p2 = self.MIN2345_2537()
     #     p3 = self.BDCARB()
-    #     if norm is True:
+    #     if norm:
     #         p1 = normalizeParameter(p1)
     #         p2 = normalizeParameter(p2)
     #         p3 = normalizeParameter(p3)
@@ -547,7 +546,7 @@ class oreXpressParamCalculator:
     #     p1 = self.SINDEX2()
     #     p2 = self.BD2100_2()
     #     p3 = self.BD1900_2()
-    #     if norm is True:
+    #     if norm:
     #         p1 = normalizeParameter(p1)
     #         p2 = normalizeParameter(p2)
     #         p3 = normalizeParameter(p3)
@@ -561,7 +560,7 @@ class oreXpressParamCalculator:
     #     p1 = self.ISLOPE()
     #     p2 = self.BD1400()
     #     p3 = self.IRR2()
-    #     if norm is True:
+    #     if norm:
     #         p1 = normalizeParameter(p1)
     #         p2 = normalizeParameter(p2)
     #         p3 = normalizeParameter(p3)
@@ -575,7 +574,7 @@ class oreXpressParamCalculator:
     #     p1 = self.MIN2250()
     #     p2 = self.BD2250()
     #     p3 = self.BD1900r2()
-    #     if norm is True:
+    #     if norm:
     #         p1 = normalizeParameter(p1)
     #         p2 = normalizeParameter(p2)
     #         p3 = normalizeParameter(p3)

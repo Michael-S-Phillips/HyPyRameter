@@ -7,17 +7,12 @@ Created on Sun Jul 10 13:33:42 2022
 """
 import numpy as np
 import timeit
-try:
-    import matlab.engine
-except ImportError:
-    print('matlab engine not found')
-    pass
+# import matlab.engine
 import os
 from matplotlib import pyplot as plt 
 import spectral.io.envi as envi
 import multiprocessing as mp
-from param_utils import utility_functions as u
-from param_utils import getPoly,getPolyInt
+import param_utils as u
 from spectral import calc_stats,noise_from_diffs,mnf
 from tqdm import tqdm
 
@@ -35,25 +30,25 @@ class paramCalculator:
         
     '''
     
-    def __init__(self, outdir, vfile=False, sfile=False, jfile = False, crop=False,bbl=[None],denoise=False):
+    def __init__(self, outdir, vfile=None, sfile=None, jfile=None, crop=None, bbl=[None], denoise=False):
         tic = timeit.default_timer()
-        if vfile != False:
-            self.vfile = vfile
+        self.vfile = vfile
+        self.sfile = sfile
+        self.jfile = jfile
+        if vfile is not None:
             print('loading vnir object using spectral')
             self.v_ = envi.open(vfile) 
-        if sfile !=False:
-            self.sfile = sfile
+        if sfile is not None:
             print('loading swir object using spectral')
             self.s_ = envi.open(sfile) 
-        if jfile != False:
-            self.jfile = jfile
+        if jfile is not None:
             print(f'loading {jfile}]using spectral')
             self.j_ = envi.open(jfile) 
         self.outdir = outdir
         print('\tobjects loaded\nloading data')
         
         # load wave tables and data
-        if vfile != False:
+        if vfile is not None:
             self.v_bands = [float(b) for b in self.v_.metadata['wavelength']]
             if 'default bands' in self.v_.metadata:
                 self.v_preview_bands = [int(float(b)) for b in self.v_.metadata['default bands']]
@@ -63,21 +58,23 @@ class paramCalculator:
             # self.v = np.flip(np.transpose(self.v_.load(),(1,0,2)),axis=0)
             self.v = np.array(self.v_.load())
             print('\tdata loaded')
-            if crop != False:
+            if crop is not None:
                 r0,r1,c0,c1 = crop
                 self.v = self.v[r0:r1,c0:c1,:]
-            if denoise == True:
+            if denoise:
                 print('denoising cube')
                 self.denoiser(1)
+            self.cube = self.v
+            self.wvt = self.v_bands
         
-        if sfile != False:
+        if sfile is not None:
             self.s_bands = [float(b) for b in self.s_.metadata['wavelength']]
             if 'default bands' in self.s_.metadata:
                 self.s_preview_bands = [int(float(b)) for b in self.s_.metadata['default bands']]
             # loading swir data
             self.s = np.array(self.s_.load())
             print('\tdata loaded')
-            if crop!=False:
+            if crop is not None:
                 r0,r1,c0,c1 = crop
                 self.s = self.s[r0:r1,c0:c1,:]
             
@@ -86,11 +83,13 @@ class paramCalculator:
                 gbl = [i for i,b in enumerate(abl) if i not in bbl]
                 self.s = self.s[:,:,gbl]
                 self.s_bands = [b for i,b in enumerate(self.s_bands) if i in gbl]
-            if denoise == True:
+            if denoise:
                 print('denoising cube')
                 self.denoiser(1)
-                
-        if jfile != False:
+            self.cube = self.s
+            self.wvt = self.s_bands
+
+        if jfile is not None:
             self.j_bands = [float(b) for b in self.j_.metadata['wavelength']]
             if 'default bands' in self.j_.metadata:
                 self.j_preview_bands = [int(float(b)) for b in self.j_.metadata['default bands']]
@@ -100,13 +99,15 @@ class paramCalculator:
             # self.v = np.flip(np.transpose(self.v_.load(),(1,0,2)),axis=0)
             self.j = np.array(self.j_.load())
             print('\tdata loaded')
-            if crop != False:
+            if crop:
                 r0,r1,c0,c1 = crop
                 self.j = self.j[r0:r1,c0:c1,:]
-            if denoise == True:
+            if denoise:
                 print('denoising cube')
                 self.denoiser(1)
-        
+            self.cube = self.j
+            self.wvt = self.j_bands
+
         toc = timeit.default_timer()-tic
         print(f'{np.round(toc/60,2)} minutes to load data')
         
@@ -116,53 +117,53 @@ class paramCalculator:
     # -------------------------------------------------------------------------
     # utilities
     # -------------------------------------------------------------------------
-    def denoiser(self,num_iter):
-        eng = matlab.engine.start_matlab()
-        eng.cd(os.getcwd(),nargout=0)
-        print('matlab engine started')
+    # def denoiser(self,num_iter):
+    #     eng = matlab.engine.start_matlab()
+    #     eng.cd(os.getcwd(),nargout=0)
+    #     print('matlab engine started')
 
-        if hasattr(self, 'v'):
-            time1 = timeit.default_timer()
+    #     if hasattr(self, 'v'):
+    #         time1 = timeit.default_timer()
             
-            gNoiseIndeces = np.where(np.isnan(self.v))
-            if np.shape(gNoiseIndeces[0]) > 0:
-                # replace nan values with gaussian noise
-                print('replacing nans with gaussian noise')
-                gNormal = np.random.normal(size=np.shape(gNoiseIndeces)[1])
-                for i in tqdm(range(np.shape(gNoiseIndeces)[1])):
-                    self.v[gNoiseIndeces[0][i],
-                           gNoiseIndeces[1][i],
-                           gNoiseIndeces[2][i]] = gNormal[i]*np.nanstd(self.v[:, :, gNoiseIndeces[2][i]])
-                    +np.nanmean(self.v[:, :, gNoiseIndeces[2][i]])
-            if type(self.v_bands) is not list: self.v_bands = self.v_bands.tolist()
-            wavelengths = matlab.double(self.v_bands)
-            valid_cube = matlab.double(initializer=self.v.tolist(),size=self.v.shape,is_complex=False)
-            print('\tentering matlab routine')
-            self.v = np.array(eng.ngMeet_denoiser(valid_cube,wavelengths,num_iter))
-            time2 = np.round((timeit.default_timer()-time1)/60,2)
-            print(f'\tdenoise vnir cube took {time2} minutes')
-        if hasattr(self, 's'):
-            time1 = timeit.default_timer()
+    #         gNoiseIndeces = np.where(np.isnan(self.v))
+    #         if np.shape(gNoiseIndeces[0]) > 0:
+    #             # replace nan values with gaussian noise
+    #             print('replacing nans with gaussian noise')
+    #             gNormal = np.random.normal(size=np.shape(gNoiseIndeces)[1])
+    #             for i in tqdm(range(np.shape(gNoiseIndeces)[1])):
+    #                 self.v[gNoiseIndeces[0][i],
+    #                        gNoiseIndeces[1][i],
+    #                        gNoiseIndeces[2][i]] = gNormal[i]*np.nanstd(self.v[:, :, gNoiseIndeces[2][i]])
+    #                 +np.nanmean(self.v[:, :, gNoiseIndeces[2][i]])
+    #         if type(self.v_bands) is not list: self.v_bands = self.v_bands.tolist()
+    #         wavelengths = matlab.double(self.v_bands)
+    #         valid_cube = matlab.double(initializer=self.v.tolist(),size=self.v.shape,is_complex=False)
+    #         print('\tentering matlab routine')
+    #         self.v = np.array(eng.ngMeet_denoiser(valid_cube,wavelengths,num_iter))
+    #         time2 = np.round((timeit.default_timer()-time1)/60,2)
+    #         print(f'\tdenoise vnir cube took {time2} minutes')
+    #     if hasattr(self, 's'):
+    #         time1 = timeit.default_timer()
             
-            gNoiseIndeces = np.where(np.isnan(self.s))
-            if np.shape(gNoiseIndeces[0]) > 0:
-                # replace nan values with gaussian noise
-                print('replacing nans with gaussian noise')
-                gNormal = np.random.normal(size=np.shape(gNoiseIndeces)[1])
-                for i in tqdm(range(np.shape(gNoiseIndeces)[1])):
-                    self.s[gNoiseIndeces[0][i],
-                           gNoiseIndeces[1][i],
-                           gNoiseIndeces[2][i]] = gNormal[i]*np.nanstd(self.s[:, :, gNoiseIndeces[2][i]])
-                    +np.nanmean(self.s[:, :, gNoiseIndeces[2][i]])
+    #         gNoiseIndeces = np.where(np.isnan(self.s))
+    #         if np.shape(gNoiseIndeces[0]) > 0:
+    #             # replace nan values with gaussian noise
+    #             print('replacing nans with gaussian noise')
+    #             gNormal = np.random.normal(size=np.shape(gNoiseIndeces)[1])
+    #             for i in tqdm(range(np.shape(gNoiseIndeces)[1])):
+    #                 self.s[gNoiseIndeces[0][i],
+    #                        gNoiseIndeces[1][i],
+    #                        gNoiseIndeces[2][i]] = gNormal[i]*np.nanstd(self.s[:, :, gNoiseIndeces[2][i]])
+    #                 +np.nanmean(self.s[:, :, gNoiseIndeces[2][i]])
                     
-            if type(self.s_bands) is not list: self.s_bands = self.s_bands.tolist()
-            wavelengths = matlab.double(self.s_bands)
-            print('intializing matlab cube')
-            valid_cube = matlab.double(initializer=self.s.tolist(),size=self.s.shape,is_complex=False)
-            print('\tentering matlab routine')
-            self.s_clean = np.array(eng.ngMeet_denoiser(valid_cube,wavelengths,num_iter))
-            time2 = np.round((timeit.default_timer()-time1)/60,2)
-            print(f'\tdenoise swir cube took {time2} minutes')
+    #         if type(self.s_bands) is not list: self.s_bands = self.s_bands.tolist()
+    #         wavelengths = matlab.double(self.s_bands)
+    #         print('intializing matlab cube')
+    #         valid_cube = matlab.double(initializer=self.s.tolist(),size=self.s.shape,is_complex=False)
+    #         print('\tentering matlab routine')
+    #         self.s_clean = np.array(eng.ngMeet_denoiser(valid_cube,wavelengths,num_iter))
+    #         time2 = np.round((timeit.default_timer()-time1)/60,2)
+    #         print(f'\tdenoise swir cube took {time2} minutes')
         
     def previewData(self):
         # preview data
@@ -204,30 +205,25 @@ class paramCalculator:
     # parameter library
     # -------------------------------------------------------------------------
     def HCPINDEX2(self):
-        if hasattr(self, 's'):
-            cube = self.s
-            wvt = self.s_bands
-        elif hasattr(self, 'j'):
-            cube = self.j
-            wvt = self.j_bands
+
         # extract data from image cube
-        R2120 = u.getBand(cube, wvt,2120)
-        R2140 = u.getBand(cube, wvt,2140)
-        R2230 = u.getBand(cube, wvt,2230)
-        R2250 = u.getBand(cube, wvt,2250)
-        R2430 = u.getBand(cube, wvt,2430)
-        R2460 = u.getBand(cube, wvt,2460)
-        R2530 = u.getBand(cube, wvt,2530)
-        R1690 = u.getBand(cube, wvt,1690)
+        R2120 = u.getBand(self.cube, self.wvt,2120)
+        R2140 = u.getBand(self.cube, self.wvt,2140)
+        R2230 = u.getBand(self.cube, self.wvt,2230)
+        R2250 = u.getBand(self.cube, self.wvt,2250)
+        R2430 = u.getBand(self.cube, self.wvt,2430)
+        R2460 = u.getBand(self.cube, self.wvt,2460)
+        R2530 = u.getBand(self.cube, self.wvt,2530)
+        R1690 = u.getBand(self.cube, self.wvt,1690)
     
-        W2120 = u.getClosestWavelength(2120,wvt)
-        W2140 = u.getClosestWavelength(2140,wvt)
-        W2230 = u.getClosestWavelength(2230,wvt)
-        W2250 = u.getClosestWavelength(2250,wvt)
-        W2430 = u.getClosestWavelength(2430,wvt)
-        W2460 = u.getClosestWavelength(2460,wvt)
-        W2530 = u.getClosestWavelength(2530,wvt)
-        W1690 = u.getClosestWavelength(1690,wvt)
+        W2120 = u.getClosestWavelength(2120,self.wvt)
+        W2140 = u.getClosestWavelength(2140,self.wvt)
+        W2230 = u.getClosestWavelength(2230,self.wvt)
+        W2250 = u.getClosestWavelength(2250,self.wvt)
+        W2430 = u.getClosestWavelength(2430,self.wvt)
+        W2460 = u.getClosestWavelength(2460,self.wvt)
+        W2530 = u.getClosestWavelength(2530,self.wvt)
+        W1690 = u.getClosestWavelength(1690,self.wvt)
     
     
         # compute the corrected reflectance interpolating 
@@ -247,26 +243,21 @@ class paramCalculator:
         img = np.where(img>-np.inf,img,nmin)
         return img
     def LCPINDEX2(self):
-        if hasattr(self, 's'):
-            cube = self.s
-            wvt = self.s_bands
-        elif hasattr(self, 'j'):
-            cube = self.j
-            wvt = self.j_bands
+
         # extract data from image cube
-        R1690 = u.getBand(cube, wvt, 1690)
-        R1750 = u.getBand(cube, wvt, 1750)
-        R1810 = u.getBand(cube, wvt, 1810)
-        R1870 = u.getBand(cube, wvt, 1870)
-        R1560 = u.getBand(cube, wvt, 1560)
-        R2450 = u.getBand(cube, wvt, 2450)
+        R1690 = u.getBand(self.cube, self.wvt, 1690)
+        R1750 = u.getBand(self.cube, self.wvt, 1750)
+        R1810 = u.getBand(self.cube, self.wvt, 1810)
+        R1870 = u.getBand(self.cube, self.wvt, 1870)
+        R1560 = u.getBand(self.cube, self.wvt, 1560)
+        R2450 = u.getBand(self.cube, self.wvt, 2450)
     
-        W1690 = u.getClosestWavelength(1690,wvt)
-        W1750 = u.getClosestWavelength(1750,wvt)
-        W1810 = u.getClosestWavelength(1810,wvt)
-        W1870 = u.getClosestWavelength(1870,wvt)
-        W1560 = u.getClosestWavelength(1560,wvt)
-        W2450 = u.getClosestWavelength(2450,wvt)
+        W1690 = u.getClosestWavelength(1690,self.wvt)
+        W1750 = u.getClosestWavelength(1750,self.wvt)
+        W1810 = u.getClosestWavelength(1810,self.wvt)
+        W1870 = u.getClosestWavelength(1870,self.wvt)
+        W1560 = u.getClosestWavelength(1560,self.wvt)
+        W2450 = u.getClosestWavelength(2450,self.wvt)
     
         # compute the corrected reflectance interpolating 
         slope = (R2450 - R1560)/(W2450 - W1560)
@@ -283,29 +274,24 @@ class paramCalculator:
         img = np.where(img>-np.inf,img,nmin)
         return img
     def OLINDEX3(self):
-        if hasattr(self, 's'):
-            cube = self.s
-            wvt = self.s_bands
-        elif hasattr(self, 'j'):
-            cube = self.j
-            wvt = self.j_bands
+
         # extract data from image cube
-        R1210 = u.getBand(cube, wvt,1210)
-        R1250 = u.getBand(cube, wvt,1250)
-        R1263 = u.getBand(cube, wvt,1263)
-        R1276 = u.getBand(cube, wvt,1276)
-        R1330 = u.getBand(cube, wvt,1330)
-        R1750 = u.getBand(cube, wvt,1750)
-        R1862 = u.getBand(cube, wvt,1862)
+        R1210 = u.getBand(self.cube, self.wvt,1210)
+        R1250 = u.getBand(self.cube, self.wvt,1250)
+        R1263 = u.getBand(self.cube, self.wvt,1263)
+        R1276 = u.getBand(self.cube, self.wvt,1276)
+        R1330 = u.getBand(self.cube, self.wvt,1330)
+        R1750 = u.getBand(self.cube, self.wvt,1750)
+        R1862 = u.getBand(self.cube, self.wvt,1862)
     
         # find closest Hyspex wavelength
-        W1210 = u.getClosestWavelength(1210,wvt)
-        W1250 = u.getClosestWavelength(1250,wvt)
-        W1263 = u.getClosestWavelength(1263,wvt)
-        W1276 = u.getClosestWavelength(1276,wvt)
-        W1330 = u.getClosestWavelength(1330,wvt)
-        W1750 = u.getClosestWavelength(1750,wvt)
-        W1862 = u.getClosestWavelength(1862,wvt)
+        W1210 = u.getClosestWavelength(1210,self.wvt)
+        W1250 = u.getClosestWavelength(1250,self.wvt)
+        W1263 = u.getClosestWavelength(1263,self.wvt)
+        W1276 = u.getClosestWavelength(1276,self.wvt)
+        W1330 = u.getClosestWavelength(1330,self.wvt)
+        W1750 = u.getClosestWavelength(1750,self.wvt)
+        W1862 = u.getClosestWavelength(1862,self.wvt)
     
         # ; compute the corrected reflectance interpolating 
         slope = (R1862 - R1750)/(W1862 - W1750)   #;slope = ( R2120 - R1690 ) / ( W2120 - W1690 )
@@ -323,16 +309,11 @@ class paramCalculator:
         return img
     # old, but functional, RPEAK1
     def RPEAK1(self):
-        if hasattr(self, 'v'):
-            cube = self.v
-            wvt = self.v_bands
-        elif hasattr(self, 'j'):
-            cube = self.j
-            wvt = self.j_bands
+
         rp_wv = [442,533,600,710,740,775,800,833,860,892,925,963]
-        rp_i = [wvt.index(u.getClosestWavelength(i,wvt)) for i in rp_wv]
-        rp_w = [u.getClosestWavelength(i,wvt) for i in rp_wv]
-        rp_ = cube[:,:,rp_i]
+        rp_i = [self.wvt.index(u.getClosestWavelength(i,self.wvt)) for i in rp_wv]
+        rp_w = [u.getClosestWavelength(i,self.wvt) for i in rp_wv]
+        rp_ = self.cube[:,:,rp_i]
         x_ = np.linspace(rp_w[0],rp_w[-1],num=521)
         flatShape=(np.shape(rp_)[0]*np.shape(rp_)[1],np.shape(rp_)[2])       
         rp_l = np.zeros(flatShape[0])#[]#np.empty(flatShape[0])
@@ -355,7 +336,7 @@ class paramCalculator:
         args = [(rp_w,rp_flat[i,:],5) for i in tqdm(goodIndx)]
         print('\n\tcalculating polynomials')
         with mp.Pool(6) as pool:
-            for p in pool.imap(getPoly,args):
+            for p in pool.imap(u.getPoly,args):
                 poly.append(p)
             
         print('\treturning peak reflectance and wavelengths of peak reflectance')
@@ -370,28 +351,22 @@ class paramCalculator:
         return rp_l,rp_r
     
     def BDI1000VIS(self,rp_r=None):
-        if hasattr(self, 'v'):
-            cube = self.v
-            wvt = self.v_bands
-        elif hasattr(self, 'j'):
-            cube = self.j
-            wvt = self.j_bands
             
         if rp_r is None:
             rp_l, rp_r = self.RPEAK1()
             
         # multispectral version
         # bdi_wv = [833,860,892,925,951,984,989] 
-        # vi = [wvt.index(u.getClosestWavelength(i,wvt)) for i in bdi_wv]
-        # wv_um = [u.getClosestWavelength(i,wvt)/1000 for i in bdi_wv]
+        # vi = [self.wvt.index(u.getClosestWavelength(i,self.wvt)) for i in bdi_wv]
+        # wv_um = [u.getClosestWavelength(i,self.wvt)/1000 for i in bdi_wv]
         # wv_ = np.linspace(wv_um[0],wv_um[-1],num=201)
         
-        vi0 = wvt.index(u.getClosestWavelength(833,wvt))
-        vi1 = wvt.index(u.getClosestWavelength(989,wvt))
+        vi0 = self.wvt.index(u.getClosestWavelength(833,self.wvt))
+        vi1 = self.wvt.index(u.getClosestWavelength(989,self.wvt))
         n = vi1-vi0 + 1
         vi = np.linspace(vi0,vi1,n,dtype=int)
-        wv_um = [wvt[i]/1000 for i in vi]
-        bdi1000_cube = cube[:,:,vi]
+        wv_um = [self.wvt[i]/1000 for i in vi]
+        bdi1000_cube = self.cube[:,:,vi]
         bdi_norm = np.empty(np.shape(bdi1000_cube))
         print('\tnormalizing input data')
         for b in tqdm(range(len(vi))):
@@ -411,7 +386,7 @@ class paramCalculator:
             args.append((wv_um_,spec_vec_,4))
         print('\treturning integrated polynomial values')
         with mp.Pool(6) as pool:
-            for integ in pool.imap(getPolyInt,args):
+            for integ in pool.imap(u.getPolyInt,args):
                 bdi1000vis_value.append(integ)
         
         print('\treshaping array')
@@ -431,62 +406,40 @@ class paramCalculator:
         #             bdi1000vis_value[i,j] = np.nan
         return bdi1000vis_value
     def SH460(self):
-        if hasattr(self, 'v'):
-            cube = self.v
-            wvt = self.v_bands
-        elif hasattr(self, 'j'):
-            cube = self.j
-            wvt = self.j_bands
             
-        img = u.getBandDepthInvert(u, cube, wvt, 420, 460, 520)
+        img = u.getBandDepthInvert(self.cube, self.wvt, 420, 460, 520)
         return img
     def BD530_2(self):
-        if hasattr(self, 'v'):
-            cube = self.v
-            wvt = self.v_bands
-        elif hasattr(self, 'j'):
-            cube = self.j
-            wvt = self.j_bands
-        img = u.getBandDepth(u, cube, wvt, 440, 530, 614)
+
+        img = u.getBandDepth(self.cube, self.wvt, 440, 530, 614)
         return img
     def BD670(self):
         # this is a custom parameter
-        if hasattr(self, 'v'):
-            cube = self.v
-            wvt = self.v_bands
-        elif hasattr(self, 'j'):
-            cube = self.j
-            wvt = self.j_bands
-        img = u.getBandDepth(u, cube, wvt, 620, 670, 745)
+
+        img = u.getBandDepth(self.cube, self.wvt, 620, 670, 745)
         return img
     def D700(self):
         # a custom parameter for chlorophyll
-        if hasattr(self, 'v'):
-            cube = self.v
-            wvt = self.v_bands
-        elif hasattr(self, 'j'):
-            cube = self.j
-            wvt = self.j_bands
         
         # extract individual channels
-        R630 = u.getBand(cube,wvt,630)
-        R740 = u.getBand(cube,wvt,740)
-        R760 = u.getBand(cube,wvt,760)
-        R770 = u.getBand(cube,wvt,770)
-        R690 = u.getBand(cube,wvt,690,kwidth=3)
-        R710 = u.getBand(cube,wvt,710,kwidth=3)
-        R720 = u.getBand(cube,wvt,720,kwidth=3)
-        R830 = u.getBand(cube,wvt,830)
+        R630 = u.getBand(self.cube,self.wvt,630)
+        R740 = u.getBand(self.cube,self.wvt,740)
+        R760 = u.getBand(self.cube,self.wvt,760)
+        R770 = u.getBand(self.cube,self.wvt,770)
+        R690 = u.getBand(self.cube,self.wvt,690,kwidth=3)
+        R710 = u.getBand(self.cube,self.wvt,710,kwidth=3)
+        R720 = u.getBand(self.cube,self.wvt,720,kwidth=3)
+        R830 = u.getBand(self.cube,self.wvt,830)
         
         # get closestgetClosestWavelengthngth
-        W630 = u.getClosestWavelength(630,wvt)
-        W740 = u.getClosestWavelength(740,wvt)
-        W760 = u.getClosestWavelength(760,wvt)
-        W770 = u.getClosestWavelength(770,wvt)
-        W690 = u.getClosestWavelength(690,wvt)
-        W710 = u.getClosestWavelength(710,wvt)
-        W720 = u.getClosestWavelength(720,wvt)
-        W830 = u.getClosestWavelength(830,wvt)
+        W630 = u.getClosestWavelength(630,self.wvt)
+        W740 = u.getClosestWavelength(740,self.wvt)
+        W760 = u.getClosestWavelength(760,self.wvt)
+        W770 = u.getClosestWavelength(770,self.wvt)
+        W690 = u.getClosestWavelength(690,self.wvt)
+        W710 = u.getClosestWavelength(710,self.wvt)
+        W720 = u.getClosestWavelength(720,self.wvt)
+        W830 = u.getClosestWavelength(830,self.wvt)
         
         # compute the interpolated continuum values at selected wavelengths between 630 and 830
         slope= (R830 - R630)/(W830 - W630)
@@ -504,42 +457,24 @@ class paramCalculator:
         return img
     def BD875(self):
         # this is a custom parameter
-        if hasattr(self, 'v'):
-            cube = self.v
-            wvt = self.v_bands
-        elif hasattr(self, 'j'):
-            cube = self.j
-            wvt = self.j_bands
             
-        img = u.getBandDepth(u, cube, wvt, 747, 875, 980)
+        img = u.getBandDepth(self.cube, self.wvt, 747, 875, 980)
         return img
     def BD920_2(self):
-        if hasattr(self, 'v'):
-            cube = self.v
-            wvt = self.v_bands
-        elif hasattr(self, 'j'):
-            cube = self.j
-            wvt = self.j_bands
             
-        img = u.getBandDepth(u, cube,wvt,807,920,984)
+        img = u.getBandDepth(self.cube,self.wvt,807,920,984)
         return img
     def ELMSUL(self):
         # this is a custom parameter
-        if hasattr(self, 'v'):
-            cube = self.v
-            wvt = self.v_bands
-        elif hasattr(self, 'j'):
-            cube = self.j
-            wvt = self.j_bands
             
-        R400 = u.getBand(cube, wvt, 400,kwidth=1)
-        R430 = u.getBand(cube, wvt, 430)
-        R525 = u.getBand(cube, wvt, 525)
-        R900 = u.getBand(cube, wvt, 900)
-        W400 = u.getClosestWavelength(400, wvt)
-        W430 = u.getClosestWavelength(430, wvt)
-        W525 = u.getClosestWavelength(525, wvt)
-        W900 = u.getClosestWavelength(900, wvt)
+        R400 = u.getBand(self.cube, self.wvt, 400,kwidth=1)
+        R430 = u.getBand(self.cube, self.wvt, 430)
+        R525 = u.getBand(self.cube, self.wvt, 525)
+        R900 = u.getBand(self.cube, self.wvt, 900)
+        W400 = u.getClosestWavelength(400, self.wvt)
+        W430 = u.getClosestWavelength(430, self.wvt)
+        W525 = u.getClosestWavelength(525, self.wvt)
+        W900 = u.getClosestWavelength(900, self.wvt)
         # want in units of reflectance / um
         s1 = 1000*np.abs((R400-R430)/(W430-W400)) #should be small (close to zero)
         s2 = 1000*(R525-R430)/(W525-W430) #should be large
@@ -547,87 +482,51 @@ class paramCalculator:
         img = s2-(s1+s3)
         return img, s3
     def BD2210_2(self):
-        if hasattr(self, 's'):
-            cube = self.s
-            wvt = self.s_bands
-        elif hasattr(self, 'j'):
-            cube = self.j
-            wvt = self.j_bands
-        # img = u.getBandDepth(u,cube,wvt,2165,2210,2290) #(kaolinite group)
-        img = u.getBandArea(u, cube, wvt, 2165, 2290)
+
+        # img = u.getBandDepth(self.cube,self.wvt,2165,2210,2290) #(kaolinite group)
+        img = u.getBandArea(self.cube, self.wvt, 2165, 2290)
         return img
     def BD2190(self):
-        if hasattr(self, 's'):
-            cube = self.s
-            wvt = self.s_bands
-        elif hasattr(self, 'j'):
-            cube = self.j
-            wvt = self.j_bands
-        # img = u.getBandDepth(u,cube,wvt,2120,2185,2250,mw=3,hw=3) #(Beidellite, Allophane)
-        img = u.getBandArea(u, cube, wvt, 2120, 2250)
+
+        # img = u.getBandDepth(self.cube,self.wvt,2120,2185,2250,mw=3,hw=3) #(Beidellite, Allophane)
+        img = u.getBandArea(self.cube, self.wvt, 2120, 2250)
         return img
     def BD2250(self):
-        if hasattr(self, 's'):
-            cube = self.s
-            wvt = self.s_bands
-        elif hasattr(self, 'j'):
-            cube = self.j
-            wvt = self.j_bands
-        # img = u.getBandDepth(u,cube,wvt,2120, 2245, 2340,mw=7,hw=3) 
-        img = u.getBandArea(u, cube, wvt, 2120, 2340)
+
+        # img = u.getBandDepth(self.cube,self.wvt,2120, 2245, 2340,mw=7,hw=3) 
+        img = u.getBandArea(self.cube, self.wvt, 2120, 2340)
         return img
     def BD2165(self):
-        if hasattr(self, 's'):
-            cube = self.s
-            wvt = self.s_bands
-        elif hasattr(self, 'j'):
-            cube = self.j
-            wvt = self.j_bands
-        # img = u.getBandDepth(u,cube,wvt,2120,2165,2230,mw=3,hw=3) #(kaolinite group)
-        img = u.getBandArea(u, cube, wvt, 2120, 2230)
+
+        # img = u.getBandDepth(self.cube,self.wvt,2120,2165,2230,mw=3,hw=3) #(kaolinite group)
+        img = u.getBandArea(self.cube, self.wvt, 2120, 2230)
         return img
     def BD2355(self):
-        if hasattr(self, 's'):
-            cube = self.s
-            wvt = self.s_bands
-        elif hasattr(self, 'j'):
-            cube = self.j
-            wvt = self.j_bands
-        # img = u.getBandDepth(u,cube,wvt,2300, 2355, 2450) #(fe/mg phyllo group)
-        img = u.getBandArea(u, cube, wvt, 2300, 2450)
+
+        # img = u.getBandDepth(self.cube,self.wvt,2300, 2355, 2450) #(fe/mg phyllo group)
+        img = u.getBandArea(self.cube, self.wvt, 2300, 2450)
         return img
     def BD2290(self):
-        if hasattr(self, 's'):
-            cube = self.s
-            wvt = self.s_bands
-        elif hasattr(self, 'j'):
-            cube = self.j
-            wvt = self.j_bands
-        # img = u.getBandDepth(u,cube,wvt,2250, 2290, 2350) #(fe/mg phyllo group)
-        img = u.getBandArea(u, cube, wvt, 2210, 2350)
+
+        # img = u.getBandDepth(self.cube,self.wvt,2250, 2290, 2350) #(fe/mg phyllo group)
+        img = u.getBandArea(self.cube, self.wvt, 2210, 2350)
         return img
     def D2200(self):
-        if hasattr(self, 's'):
-            cube = self.s
-            wvt = self.s_bands
-        elif hasattr(self, 'j'):
-            cube = self.j
-            wvt = self.j_bands
         
         # extract individual channels
-        R1815 = u.getBand(cube, wvt,1815, kwidth=5)
-        R2165 = u.getBand(cube, wvt,2165)
-        R2210 = u.getBand(cube, wvt,2210, kwidth=5)
-        R2230 = u.getBand(cube, wvt,2230, kwidth=5)
-        R2430 = u.getBand(cube, wvt,2430, kwidth=5)
+        R1815 = u.getBand(self.cube, self.wvt,1815, kwidth=5)
+        R2165 = u.getBand(self.cube, self.wvt,2165)
+        R2210 = u.getBand(self.cube, self.wvt,2210, kwidth=5)
+        R2230 = u.getBand(self.cube, self.wvt,2230, kwidth=5)
+        R2430 = u.getBand(self.cube, self.wvt,2430, kwidth=5)
     
     
         # retrieve wavelengths nearest the requested values
-        W1815 = u.getClosestWavelength(1815, wvt)
-        W2165 = u.getClosestWavelength(2165, wvt) 
-        W2210 = u.getClosestWavelength(2210, wvt)
-        W2230 = u.getClosestWavelength(2230, wvt)
-        W2430 = u.getClosestWavelength(2430, wvt)
+        W1815 = u.getClosestWavelength(1815, self.wvt)
+        W2165 = u.getClosestWavelength(2165, self.wvt) 
+        W2210 = u.getClosestWavelength(2210, self.wvt)
+        W2230 = u.getClosestWavelength(2230, self.wvt)
+        W2430 = u.getClosestWavelength(2430, self.wvt)
         
         # compute the interpolated continuum values at selected wavelengths between 1815 and 2430
         slope = (R2430 - R1815)/(W2430 - W1815)
@@ -641,31 +540,26 @@ class paramCalculator:
         img = np.where(img>-np.inf,img,nmin)
         return img
     def D2300(self):
-        if hasattr(self, 's'):
-            cube = self.s
-            wvt = self.s_bands
-        elif hasattr(self, 'j'):
-            cube = self.j
-            wvt = self.j_bands
+
         # extract individual channels
-        R1815 = u.getBand(cube,wvt,1815)
-        R2120 = u.getBand(cube,wvt,2120)
-        R2170 = u.getBand(cube,wvt,2170)
-        R2210 = u.getBand(cube,wvt,2210)
-        R2290 = u.getBand(cube,wvt,2290,kwidth=3)
-        R2320 = u.getBand(cube,wvt,2320,kwidth=3)
-        R2330 = u.getBand(cube,wvt,2330,kwidth=3)
-        R2530 = u.getBand(cube,wvt,2530)
+        R1815 = u.getBand(self.cube,self.wvt,1815)
+        R2120 = u.getBand(self.cube,self.wvt,2120)
+        R2170 = u.getBand(self.cube,self.wvt,2170)
+        R2210 = u.getBand(self.cube,self.wvt,2210)
+        R2290 = u.getBand(self.cube,self.wvt,2290,kwidth=3)
+        R2320 = u.getBand(self.cube,self.wvt,2320,kwidth=3)
+        R2330 = u.getBand(self.cube,self.wvt,2330,kwidth=3)
+        R2530 = u.getBand(self.cube,self.wvt,2530)
         
         # retrieve wavelengths nearest the requested values
-        W1815 = u.getClosestWavelength(1815,wvt)
-        W2120 = u.getClosestWavelength(2120,wvt)
-        W2170 = u.getClosestWavelength(2170,wvt)
-        W2210 = u.getClosestWavelength(2210,wvt)
-        W2290 = u.getClosestWavelength(2290,wvt)
-        W2320 = u.getClosestWavelength(2320,wvt)
-        W2330 = u.getClosestWavelength(2330,wvt)
-        W2530 = u.getClosestWavelength(2530,wvt)
+        W1815 = u.getClosestWavelength(1815,self.wvt)
+        W2120 = u.getClosestWavelength(2120,self.wvt)
+        W2170 = u.getClosestWavelength(2170,self.wvt)
+        W2210 = u.getClosestWavelength(2210,self.wvt)
+        W2290 = u.getClosestWavelength(2290,self.wvt)
+        W2320 = u.getClosestWavelength(2320,self.wvt)
+        W2330 = u.getClosestWavelength(2330,self.wvt)
+        W2530 = u.getClosestWavelength(2530,self.wvt)
         
         # compute the interpolated continuum values at selected wavelengths between 1815 and 2530
         slope = (R2530 - R1815)/(W2530 - W1815)
@@ -682,46 +576,40 @@ class paramCalculator:
         img = np.where(img>-np.inf,img,nmin) 
         return img
     def BD1900r2(self):
-        if hasattr(self, 's'):
-            cube = self.s
-            wvt = self.s_bands
-        elif hasattr(self, 'j'):
-            cube = self.j
-            wvt = self.j_bands
             
-        img = u.getBandArea(u, cube, wvt, 1800, 2000)
+        img = u.getBandArea(self.cube, self.wvt, 1800, 2000)
         # extract individual channels, replacing CRISM_NANs with IEEE_NaNs
-        # R1908 = u.getBand(cube,wvt,1908, kwidth = 1) 
-        # R1914 = u.getBand(cube,wvt,1914, kwidth = 1) 
-        # R1921 = u.getBand(cube,wvt,1921, kwidth = 1) 
-        # R1928 = u.getBand(cube,wvt,1928, kwidth = 1) 
-        # R1934 = u.getBand(cube,wvt,1934, kwidth = 1) 
-        # R1941 = u.getBand(cube,wvt,1941, kwidth = 1) 
-        # R1862 = u.getBand(cube,wvt,1862, kwidth = 1) 
-        # R1869 = u.getBand(cube,wvt,1869, kwidth = 1) 
-        # R1875 = u.getBand(cube,wvt,1875, kwidth = 1) 
-        # R2112 = u.getBand(cube,wvt,2112, kwidth = 1) 
-        # R2120 = u.getBand(cube,wvt,2120, kwidth = 1) 
-        # R2126 = u.getBand(cube,wvt,2126, kwidth = 1) 
+        # R1908 = u.getBand(self.cube,self.wvt,1908, kwidth = 1) 
+        # R1914 = u.getBand(self.cube,self.wvt,1914, kwidth = 1) 
+        # R1921 = u.getBand(self.cube,self.wvt,1921, kwidth = 1) 
+        # R1928 = u.getBand(self.cube,self.wvt,1928, kwidth = 1) 
+        # R1934 = u.getBand(self.cube,self.wvt,1934, kwidth = 1) 
+        # R1941 = u.getBand(self.cube,self.wvt,1941, kwidth = 1) 
+        # R1862 = u.getBand(self.cube,self.wvt,1862, kwidth = 1) 
+        # R1869 = u.getBand(self.cube,self.wvt,1869, kwidth = 1) 
+        # R1875 = u.getBand(self.cube,self.wvt,1875, kwidth = 1) 
+        # R2112 = u.getBand(self.cube,self.wvt,2112, kwidth = 1) 
+        # R2120 = u.getBand(self.cube,self.wvt,2120, kwidth = 1) 
+        # R2126 = u.getBand(self.cube,self.wvt,2126, kwidth = 1) 
         
-        # R1815 = u.getBand(cube, wvt, 1815);
-        # R2132 = u.getBand(cube, wvt, 2132); 
+        # R1815 = u.getBand(self.cube, self.wvt, 1815);
+        # R2132 = u.getBand(self.cube, self.wvt, 2132); 
         
         # # retrieve the CRISM wavelengths nearest the requested values
-        # W1908 = u.getClosestWavelength(1908, wvt)
-        # W1914 = u.getClosestWavelength(1914, wvt)
-        # W1921 = u.getClosestWavelength(1921, wvt)
-        # W1928 = u.getClosestWavelength(1928, wvt)
-        # W1934 = u.getClosestWavelength(1934, wvt)
-        # W1941 = u.getClosestWavelength(1941, wvt)
-        # W1862 = u.getClosestWavelength(1862, wvt)#
-        # W1869 = u.getClosestWavelength(1869, wvt)
-        # W1875 = u.getClosestWavelength(1875, wvt)
-        # W2112 = u.getClosestWavelength(2112, wvt)
-        # W2120 = u.getClosestWavelength(2120, wvt)
-        # W2126 = u.getClosestWavelength(2126, wvt)
-        # W1815 = u.getClosestWavelength(1815, wvt)#  
-        # W2132 = u.getClosestWavelength(2132, wvt) 
+        # W1908 = u.getClosestWavelength(1908, self.wvt)
+        # W1914 = u.getClosestWavelength(1914, self.wvt)
+        # W1921 = u.getClosestWavelength(1921, self.wvt)
+        # W1928 = u.getClosestWavelength(1928, self.wvt)
+        # W1934 = u.getClosestWavelength(1934, self.wvt)
+        # W1941 = u.getClosestWavelength(1941, self.wvt)
+        # W1862 = u.getClosestWavelength(1862, self.wvt)#
+        # W1869 = u.getClosestWavelength(1869, self.wvt)
+        # W1875 = u.getClosestWavelength(1875, self.wvt)
+        # W2112 = u.getClosestWavelength(2112, self.wvt)
+        # W2120 = u.getClosestWavelength(2120, self.wvt)
+        # W2126 = u.getClosestWavelength(2126, self.wvt)
+        # W1815 = u.getClosestWavelength(1815, self.wvt)#  
+        # W2132 = u.getClosestWavelength(2132, self.wvt) 
         
         # # compute the interpolated continuum values at selected wavelengths between 1815 and 2530
         # slope = (R2132 - R1815)/(W2132 - W1815)
@@ -743,16 +631,11 @@ class paramCalculator:
         # img = np.where(img>-np.inf,img,nmin)
         return img
     def MIN2295_2480(self):
-        if hasattr(self, 's'):
-            cube = self.s
-            wvt = self.s_bands
-        elif hasattr(self, 'j'):
-            cube = self.j
-            wvt = self.j_bands
-        # img1 = u.getBandDepth(u,cube, wvt,2165,2295,2364)
-        # img2 = u.getBandDepth(u,cube,wvt,2364,2480,2570)
-        img1 = u.getBandArea(u,cube, wvt,2165,2295,2364)
-        img2 = u.getBandArea(u,cube,wvt,2364,2480,2570)
+
+        # img1 = u.getBandDepth(self.cube, self.wvt,2165,2295,2364)
+        # img2 = u.getBandDepth(self.cube,self.wvt,2364,2480,2570)
+        img1 = u.getBandArea(self.cube, self.wvt,2165,2295,2364)
+        img2 = u.getBandArea(self.cube,self.wvt,2364,2480,2570)
         img3 = np.empty((np.shape(img1)[0],np.shape(img1)[1],2))
         img3[:,:,0] = img1
         img3[:,:,1] = img2
@@ -761,16 +644,11 @@ class paramCalculator:
         img = np.where(img>-np.inf,img,nmin)
         return img
     def MIN2250(self):
-        if hasattr(self, 's'):
-            cube = self.s
-            wvt = self.s_bands
-        elif hasattr(self, 'j'):
-            cube = self.j
-            wvt = self.j_bands
-        # img1 = u.getBandDepth(u,cube, wvt,2165, 2210, 2350)
-        # img2 = u.getBandDepth(u,cube,wvt,2165, 2265, 2350)
-        img1 = u.getBandArea(u,cube, wvt,2165, 2210, 2350)
-        img2 = u.getBandArea(u,cube,wvt,2165, 2265, 2350)
+
+        # img1 = u.getBandDepth(self.cube, self.wvt,2165, 2210, 2350)
+        # img2 = u.getBandDepth(self.cube,self.wvt,2165, 2265, 2350)
+        img1 = u.getBandArea(self.cube, self.wvt,2165, 2210, 2350)
+        img2 = u.getBandArea(self.cube,self.wvt,2165, 2265, 2350)
         img3 = np.empty((np.shape(img1)[0],np.shape(img1)[1],2))
         img3[:,:,0] = img1
         img3[:,:,1] = img2
@@ -779,16 +657,11 @@ class paramCalculator:
         img = np.where(img>-np.inf,img,nmin)
         return img
     def MIN2345_2537(self):
-        if hasattr(self, 's'):
-            cube = self.s
-            wvt = self.s_bands
-        elif hasattr(self, 'j'):
-            cube = self.j
-            wvt = self.j_bands
-        # img1 = u.getBandDepth(u,cube, wvt,2250, 2345, 2430)
-        # img2 = u.getBandDepth(u,cube,wvt,2430, 2537, 2602)
-        img1 = u.getBandArea(u,cube, wvt,2250, 2345, 2430)
-        img2 = u.getBandArea(u,cube,wvt,2430, 2537, 2602)
+
+        # img1 = u.getBandDepth(self.cube, self.wvt,2250, 2345, 2430)
+        # img2 = u.getBandDepth(self.cube,self.wvt,2430, 2537, 2602)
+        img1 = u.getBandArea(self.cube, self.wvt,2250, 2345, 2430)
+        img2 = u.getBandArea(self.cube,self.wvt,2430, 2537, 2602)
         img3 = np.empty((np.shape(img1)[0],np.shape(img1)[1],2))
         img3[:,:,0] = img1
         img3[:,:,1] = img2
@@ -797,34 +670,29 @@ class paramCalculator:
         img = np.where(img>-np.inf,img,nmin)
         return img    
     def BDCARB(self):
-        if hasattr(self, 's'):
-            cube = self.s
-            wvt = self.s_bands
-        elif hasattr(self, 'j'):
-            cube = self.j
-            wvt = self.j_bands
-        b1 = u.getBandArea(u,cube,wvt,2220,2375)
-        b2 = u.getBandArea(u,cube,wvt,2400,2500)
+
+        b1 = u.getBandArea(self.cube,self.wvt,2220,2375)
+        b2 = u.getBandArea(self.cube,self.wvt,2400,2500)
         img = b1+b2
         # extract channels, replacing CRISM_NAN with IEEE NAN
-        # R2230 = u.getBand(cube, wvt, 2230)
-        # R2320 = u.getBand(cube, wvt, 2320)
-        # R2330 = u.getBand(cube, wvt, 2330)
-        # R2390 = u.getBand(cube, wvt, 2390)
-        # R2520 = u.getBand(cube, wvt, 2520)
-        # R2530 = u.getBand(cube, wvt, 2530)
-        # R2600 = u.getBand(cube, wvt, 2600)
+        # R2230 = u.getBand(self.cube, self.wvt, 2230)
+        # R2320 = u.getBand(self.cube, self.wvt, 2320)
+        # R2330 = u.getBand(self.cube, self.wvt, 2330)
+        # R2390 = u.getBand(self.cube, self.wvt, 2390)
+        # R2520 = u.getBand(self.cube, self.wvt, 2520)
+        # R2530 = u.getBand(self.cube, self.wvt, 2530)
+        # R2600 = u.getBand(self.cube, self.wvt, 2600)
     
         # # identify nearest wavelengths
-        # WL1 = u.getClosestWavelength(2230,wvt)
-        # WC1 = (u.getClosestWavelength(2330,wvt)+u.getClosestWavelength(2320,wvt))*0.5
-        # WH1 = u.getClosestWavelength(2390,wvt)
+        # WL1 = u.getClosestWavelength(2230,self.wvt)
+        # WC1 = (u.getClosestWavelength(2330,self.wvt)+u.getClosestWavelength(2320,self.wvt))*0.5
+        # WH1 = u.getClosestWavelength(2390,self.wvt)
         # a =  (WC1 - WL1)/(WH1 - WL1)  # a gets multipled by the longer (higher wvln)  band
         # b = 1.0-a                     # b gets multiplied by the shorter (lower wvln) band
     
-        # WL2 =  u.getClosestWavelength(2390,wvt)
-        # WC2 = (u.getClosestWavelength(2530,wvt) + u.getClosestWavelength(2520,wvt))*0.5
-        # WH2 =  u.getClosestWavelength(2600,wvt)
+        # WL2 =  u.getClosestWavelength(2390,self.wvt)
+        # WC2 = (u.getClosestWavelength(2530,self.wvt) + u.getClosestWavelength(2520,self.wvt))*0.5
+        # WH2 =  u.getClosestWavelength(2600,self.wvt)
         # c = (WC2 - WL2)/(WH2 - WL2)   # c gets multipled by the longer (higher wvln)  band
         # d = 1.0-c                           # d gets multiplied by the shorter (lower wvln) band
     
@@ -834,48 +702,28 @@ class paramCalculator:
         # img = np.where(img>-np.inf,img,nmin)
         return img
     def SINDEX2(self):
-        if hasattr(self, 's'):
-            cube = self.s
-            wvt = self.s_bands
-        elif hasattr(self, 'j'):
-            cube = self.j
-            wvt = self.j_bands
-        # img = u.getBandDepthInvert(u,cube,wvt,2120, 2290, 2400,mw=7,hw=3)
-        img = u.getBandAreaInvert(u,cube,wvt, 2120, 2400, hw=3)
+
+        # img = u.getBandDepthInvert(self.cube,self.wvt,2120, 2290, 2400,mw=7,hw=3)
+        img = u.getBandAreaInvert(self.cube,self.wvt, 2120, 2400, hw=3)
         return img
     def BD2100_2(self):
-        if hasattr(self, 's'):
-            cube = self.s
-            wvt = self.s_bands
-        elif hasattr(self, 'j'):
-            cube = self.j
-            wvt = self.j_bands
-        # img = u.getBandDepth(u,cube,wvt,1930, 2132, 2250,lw=3,hw=3)
-        img = u.getBandArea(u, cube, wvt, 1930, 2250)
+
+        # img = u.getBandDepth(self.cube,self.wvt,1930, 2132, 2250,lw=3,hw=3)
+        img = u.getBandArea(self.cube, self.wvt, 1930, 2250)
         return img
     def BD1900_2(self):
-        if hasattr(self, 's'):
-            cube = self.s
-            wvt = self.s_bands
-        elif hasattr(self, 'j'):
-            cube = self.j
-            wvt = self.j_bands
-        # img = u.getBandDepth(u,cube,wvt,1850, 1930, 2067)
-        img = u.getBandArea(u, cube, wvt, 1850, 2067)
+
+        # img = u.getBandDepth(self.cube,self.wvt,1850, 1930, 2067)
+        img = u.getBandArea(self.cube, self.wvt, 1850, 2067)
         return img
     def ISLOPE(self):
-        if hasattr(self, 's'):
-            cube = self.s
-            wvt = self.s_bands
-        elif hasattr(self, 'j'):
-            cube = self.j
-            wvt = self.j_bands
+
         # extract individual bands
-        R1815 = u.getBand(cube, wvt, 1815)
-        R2530 = u.getBand(cube, wvt, 2530)
+        R1815 = u.getBand(self.cube, self.wvt, 1815)
+        R2530 = u.getBand(self.cube, self.wvt, 2530)
     
-        W1815 = u.getClosestWavelength(1815,wvt)
-        W2530 = u.getClosestWavelength(2530,wvt)
+        W1815 = u.getClosestWavelength(1815,self.wvt)
+        W2530 = u.getClosestWavelength(2530,self.wvt)
     
         # want in units of reflectance / um
         img = 1000.0 * ( R1815 - R2530 )/ ( W2530 - W1815 )
@@ -883,85 +731,45 @@ class paramCalculator:
         img = np.where(img>-np.inf,img,nmin)
         return img
     def BD1400(self):
-        if hasattr(self, 's'):
-            cube = self.s
-            wvt = self.s_bands
-        elif hasattr(self, 'j'):
-            cube = self.j
-            wvt = self.j_bands
-        # img = u.getBandDepth(u, cube, wvt, 1330, 1395, 1467, mw=3)
-        img = u.getBandArea(u, cube, wvt, 1330, 1620)
+
+        # img = u.getBandDepth(self.cube, self.wvt, 1330, 1395, 1467, mw=3)
+        img = u.getBandArea(self.cube, self.wvt, 1330, 1620)
         return img
     def BD1200(self):
-        if hasattr(self, 's'):
-            cube = self.s
-            wvt = self.s_bands
-        elif hasattr(self, 'j'):
-            cube = self.j
-            wvt = self.j_bands
-        img = u.getBandArea(u, cube, wvt, 1115, 1260)
+
+        img = u.getBandArea(self.cube, self.wvt, 1115, 1260)
         return img
     def BD1450(self):
-        if hasattr(self, 's'):
-            cube = self.s
-            wvt = self.s_bands
-        elif hasattr(self, 'j'):
-            cube = self.j
-            wvt = self.j_bands
-        # img = u.getBandDepth(u, cube, wvt, 1340, 1450, 1535, mw=3)
-        img = u.getBandArea(u, cube, wvt, 1340, 1535)
+
+        # img = u.getBandDepth(self.cube, self.wvt, 1340, 1450, 1535, mw=3)
+        img = u.getBandArea(self.cube, self.wvt, 1340, 1535)
         return img
     def BD2100_3(self):
-        if hasattr(self, 's'):
-            cube = self.s
-            wvt = self.s_bands
-        elif hasattr(self, 'j'):
-            cube = self.j
-            wvt = self.j_bands
-        img = u.getBandArea(u, cube, wvt, 2016, 2220)
+
+        img = u.getBandArea(self.cube, self.wvt, 2016, 2220)
         return img
     def BD1750(self):
-        if hasattr(self, 's'):
-            cube = self.s
-            wvt = self.s_bands
-        elif hasattr(self, 'j'):
-            cube = self.j
-            wvt = self.j_bands
-        img = u.getBandArea(u, cube, wvt, 1688, 1820)
+
+        img = u.getBandArea(self.cube, self.wvt, 1688, 1820)
         return img
     def GypTrip(self):
-        if hasattr(self, 's'):
-            cube = self.s
-            wvt = self.s_bands
-        elif hasattr(self, 'j'):
-            cube = self.j
-            wvt = self.j_bands
-        t1 = u.getBandArea(u,cube,wvt,1420,1463)
-        t2 = u.getBandArea(u,cube,wvt,1463,1515)
-        t3 = u.getBandArea(u,cube,wvt,1515,1576)
+
+        t1 = u.getBandArea(self.cube,self.wvt,1420,1463)
+        t2 = u.getBandArea(self.cube,self.wvt,1463,1515)
+        t3 = u.getBandArea(self.cube,self.wvt,1515,1576)
         b1 = t1*t2*t3
         b2 = self.BD1750()
         img = b1+b2
         return img
     def ILL(self):
-        if hasattr(self, 's'):
-            cube = self.s
-            wvt = self.s_bands
-        elif hasattr(self, 'j'):
-            cube = self.j
-            wvt = self.j_bands
-        a1 = u.getBandArea(u,cube,wvt,2160,2273)
-        # a2 = u.getBandArea(u,cube,wvt,2280,2375)
+
+        a1 = u.getBandArea(self.cube,self.wvt,2160,2273)
+        # a2 = u.getBandArea(self.cube,self.wvt,2280,2375)
         img = a1
         return img
     def IRR2(self):
-        if hasattr(self, 's'):
-            cube = self.s
-            wvt = self.s_bands
-        elif hasattr(self, 'j'):
-            cube = self.j
-            wvt = self.j_bands
-        img = u.getBandRatio(u,cube,wvt,2530,2210)
+
+        img = u.getBandRatio(self.cube,self.wvt,2530,2210)
         return img
 
     # -------------------------------------------------------------------------
@@ -973,7 +781,7 @@ class paramCalculator:
         p1 = self.OLINDEX3()
         p2 = self.LCPINDEX2()
         p3 = self.HCPINDEX2()
-        if norm is True:
+        if norm:
             p1 = u.normalizeParameter(p1)
             p2 = u.normalizeParameter(p2)
             p3 = u.normalizeParameter(p3)
@@ -986,7 +794,7 @@ class paramCalculator:
         tic = timeit.default_timer()
         p1 = self.SH460()
         p2,p3 = self.ELMSUL()
-        if norm is True:
+        if norm:
             p1 = u.normalizeParameter(p1)
             p2 = u.normalizeParameter(p2)
             p3 = u.normalizeParameter(p3)
@@ -1000,7 +808,7 @@ class paramCalculator:
         p1 = self.BD530_2()
         p2 = self.BD670()
         p3 = self.BD875()
-        if norm is True:
+        if norm:
             p1 = u.normalizeParameter(p1)
             p2 = u.normalizeParameter(p2)
             p3 = u.normalizeParameter(p3)
@@ -1012,10 +820,10 @@ class paramCalculator:
         print('calculating CPL browse product')
         tic = timeit.default_timer()
         wvt = self.v_bands
-        p1 = u.getBandRatio(u,self.v, wvt, 680, 770)
+        p1 = u.getBandRatio(self.v, self.wvt, 680, 770)
         p2 = self.D700()
-        p3 = u.getBandRatio(u,self.v, wvt, 470, 540)
-        if norm is True:
+        p3 = u.getBandRatio(self.v, self.wvt, 470, 540)
+        if norm:
             p1 = u.normalizeParameter(p1)
             p2 = u.normalizeParameter(p2)
             p3 = u.normalizeParameter(p3)
@@ -1030,7 +838,7 @@ class paramCalculator:
         p1 = self.BD530_2()
         p2 = self.BD920_2()
         p3 = self.BDI1000VIS()
-        if norm is True:
+        if norm:
             p1 = u.normalizeParameter(p1)
             p2 = u.normalizeParameter(p2)
             p3 = u.normalizeParameter(p3)
@@ -1044,7 +852,7 @@ class paramCalculator:
         p1 = u.getBand(self.s,self.s_bands,2529)
         p2 = u.getBand(self.s,self.s_bands,1506)
         p3 = u.getBand(self.s,self.s_bands,1080)
-        if norm is True:
+        if norm:
             p1 = u.normalizeParameter(p1)
             p2 = u.normalizeParameter(p2)
             p3 = u.normalizeParameter(p3)
@@ -1058,7 +866,7 @@ class paramCalculator:
         p1 = u.getBand(self.v,self.v_bands,637)
         p2 = u.getBand(self.v,self.v_bands,550)
         p3 = u.getBand(self.v,self.v_bands,463)
-        if norm is True:
+        if norm:
             p1 = u.normalizeParameter(p1)
             p2 = u.normalizeParameter(p2)
             p3 = u.normalizeParameter(p3)
@@ -1072,7 +880,7 @@ class paramCalculator:
         p1 = self.BD2210_2()
         p2 = self.BD2190()
         p3 = self.BD2165()
-        if norm is True:
+        if norm:
             p1 = u.normalizeParameter(p1)
             p2 = u.normalizeParameter(p2)
             p3 = u.normalizeParameter(p3)
@@ -1086,7 +894,7 @@ class paramCalculator:
         p1 = self.D2200()
         p2 = self.D2300()
         p3 = self.BD1900r2()
-        if norm is True:
+        if norm:
             p1 = u.normalizeParameter(p1)
             p2 = u.normalizeParameter(p2)
             p3 = u.normalizeParameter(p3)
@@ -1100,7 +908,7 @@ class paramCalculator:
         p1 = self.BD2355()
         p2 = self.D2300()
         p3 = self.BD2290()
-        if norm is True:
+        if norm:
             p1 = u.normalizeParameter(p1)
             p2 = u.normalizeParameter(p2)
             p3 = u.normalizeParameter(p3)
@@ -1114,7 +922,7 @@ class paramCalculator:
         p1 = self.MIN2295_2480()
         p2 = self.MIN2345_2537()
         p3 = self.BDCARB()
-        if norm is True:
+        if norm:
             p1 = u.normalizeParameter(p1)
             p2 = u.normalizeParameter(p2)
             p3 = u.normalizeParameter(p3)
@@ -1128,7 +936,7 @@ class paramCalculator:
         p1 = self.SINDEX2()
         p2 = self.BD2100_2()
         p3 = self.BD1900_2()
-        if norm is True:
+        if norm:
             p1 = u.normalizeParameter(p1)
             p2 = u.normalizeParameter(p2)
             p3 = u.normalizeParameter(p3)
@@ -1142,7 +950,7 @@ class paramCalculator:
         p1 = self.ISLOPE()
         p2 = self.BD1400()
         p3 = self.IRR2()
-        if norm is True:
+        if norm:
             p1 = u.normalizeParameter(p1)
             p2 = u.normalizeParameter(p2)
             p3 = u.normalizeParameter(p3)
@@ -1156,7 +964,7 @@ class paramCalculator:
         p1 = self.MIN2250()
         p2 = self.BD2250()
         p3 = self.BD1900r2()
-        if norm is True:
+        if norm:
             p1 = u.normalizeParameter(p1)
             p2 = u.normalizeParameter(p2)
             p3 = u.normalizeParameter(p3)
@@ -1325,14 +1133,14 @@ class paramCalculator:
         tic = timeit.default_timer()
         print('processing SWIR MNF')
         print('calculating signal')
-        if mask is True:
+        if mask:
             # these values (0.0 and 2.0) are specific NaN values for HySpex data
             # you can change this to mask NaN values in your data
             mask0 = np.where(self.s==0.0,0,1)
             mask2 = np.where(self.s==2.0,0,1)
             mask = mask0*mask2
             s_signal = calc_stats(self.s,mask=mask)
-        elif mask is False:
+        else:
             s_signal = calc_stats(self.s)
         print('calculating noise')
         rowCenter = int(np.ceil(np.shape(self.s)[0]/2))
@@ -1351,12 +1159,12 @@ class paramCalculator:
         tic = timeit.default_timer()
         print('processing VIS MNF')
         print('calculating signal')
-        if mask==True:
+        if mask:
             mask0 = np.where(self.v==0.0,0,1)
             mask2 = np.where(self.s==2.0,0,1)
             mask = mask0*mask2
             v_signal = calc_stats(self.v,mask=mask)
-        elif mask==False:
+        else:
             v_signal = calc_stats(self.v)
             
         print('calculating noise')

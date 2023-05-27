@@ -11,7 +11,7 @@ import os
 # import sys
 import numpy as np
 import cv2
-from param_utils import utility_functions as u
+import param_utils as u
 from paramCalculator import paramCalculator
 from spectral import calc_stats,noise_from_diffs,mnf
 import spectral.io.envi as envi
@@ -39,7 +39,7 @@ calculate spectral parameters from SWIR image data, save as .img and as .png
 #------------------------------------------------------------------------------
 #------------- SWIR Parameters ------------------------------------------------
 #------------------------------------------------------------------------------
-if shdr != False:
+if p.sfile is not None:
     paramList = ['OLINDEX3','LCPINDEX2','HCPINDEX2','BD1400','BD1900_2','BD1900r2','BD2100_2','BD2165','BD2190','BD2210_2','BD2250','BD2290','BD2355','BDCARB','D2200','D2300','IRR2','ISLOPE','MIN2250','MIN2295_2480','MIN2345_2537','R2529', 'R1506', 'R1080','SINDEX2']
     sMeta = p.s_.metadata.copy()
     sMeta['wavelength'] = paramList
@@ -129,7 +129,7 @@ calculate spectral parameters from VIS image data, save as .img and as .png
 #------------------------------------------------------------------------------
 #------------- VIS Parameters -------------------------------------------------
 #------------------------------------------------------------------------------
-if vhdr != False:
+if p.vfile is not None:
     paramList = ['R637','R550','R463','SH460','BD530_2','BD670','D700','BD875','BD920_2','RPEAK1','BDI1000VIS','ELMSUL']
     vMeta = p.v_.metadata.copy()
     vMeta['wavelength'] = paramList
@@ -145,7 +145,7 @@ if vhdr != False:
     i1 = paramList.index('BD875')
     i2 = paramList.index('BD920_2')
     FM2 = u.buildSummary(vParams[:,:,i0], vParams[:,:,i1], vParams[:,:,i2])
-    FM2 = np.flip(u.browse2bit(u.stretchNBands(u,u.cropNZeros(u,FM2))),axis=2)
+    FM2 = np.flip(u.browse2bit(u.stretchNBands(u.cropNZeros(FM2))),axis=2)
     n = '/FM2.png'
     cv2.imwrite(savepath+n, FM2)
     
@@ -153,7 +153,7 @@ if vhdr != False:
     i1 = paramList.index('BD670')
     i2 = paramList.index('BD875')
     HEM = u.buildSummary(vParams[:,:,i0], vParams[:,:,i1], vParams[:,:,i2])
-    HEM = np.flip(u.browse2bit(u.stretchNBands(u,u.cropNZeros(u,HEM))),axis=2)
+    HEM = np.flip(u.browse2bit(u.stretchNBands(u.cropNZeros(HEM))),axis=2)
     n = '/HEM.png'
     cv2.imwrite(savepath+n, HEM)
     
@@ -162,7 +162,7 @@ if vhdr != False:
     # i2 = paramList.index('BDI1000VIS')
     # CPL = buildSummary(vParams[:,:,i0], vParams[:,:,i1], vParams[:,:,i2])
     CPL = p.CPL()
-    CPL = np.flip(u.browse2bit(u.stretchNBands(u,u.cropNZeros(u,CPL))),axis=2)
+    CPL = np.flip(u.browse2bit(u.stretchNBands(u.cropNZeros(CPL))),axis=2)
     n = '/CPL.png'
     cv2.imwrite(savepath+n, CPL)
     
@@ -171,7 +171,7 @@ if vhdr != False:
     # i2 = paramList.index('ELMSUL')
     # SUL = buildSummary(vParams[:,:,i0], vParams[:,:,i1], vParams[:,:,i2])
     SUL = p.SUL()
-    SUL = np.flip(u.browse2bit(u.stretchNBands(u,SUL)),axis=2)
+    SUL = np.flip(u.browse2bit(u.stretchNBands(SUL)),axis=2)
     n = '/SUL.png'
     cv2.imwrite(savepath+n, SUL)
 
@@ -179,7 +179,7 @@ if vhdr != False:
     i1 = paramList.index('R550')
     i2 = paramList.index('R463')
     TRU = u.buildSummary(vParams[:,:,i0], vParams[:,:,i1], vParams[:,:,i2])
-    TRU = np.flip(u.browse2bit(u.stretchNBands(u,u.cropNZeros(u,TRU))),axis=2)
+    TRU = np.flip(u.browse2bit(u.stretchNBands(u.cropNZeros(TRU))),axis=2)
     # TRU = np.flip(browse2bit(TRU),axis=2)
     n = '/TRU.png'
     cv2.imwrite(savepath+n, TRU)
@@ -229,31 +229,31 @@ if os.path.isdir(savepath) is False:
 # calculate and save browse products as .png
 bp = p.MAF()
 n = 'MAF'+'.png'
-img = np.flip(u.browse2bit(u.stretchNBands(u,u.cropNZeros(u,bp))),axis=2)
+img = np.flip(u.browse2bit(u.stretchNBands(u.cropNZeros(bp))),axis=2)
 cv2.imwrite(savepath+n,img)
 del(img)
 
 bp = p.FM2()
 n = 'FM2'+'.png'
-img = np.flip(u.browse2bit(u.stretchNBands(u,u.cropNZeros(u,bp))),axis=2)
+img = np.flip(u.browse2bit(u.stretchNBands(u.cropNZeros(bp))),axis=2)
 cv2.imwrite(savepath+n,img)
 del(img)
 
 bp = p.FAL()
 n = 'FAL'+'.png'
-img = np.flip(u.browse2bit(u.stretchNBands(u,u.cropNZeros(u,bp))),axis=2)
+img = np.flip(u.browse2bit(u.stretchNBands(u.cropNZeros(bp))),axis=2)
 cv2.imwrite(savepath+n,img)
 del(img)
 
 bp = p.PAL()
 n = 'PAL'+'.png'
-img = np.flip(u.browse2bit(u.stretchNBands(u,u.cropNZeros(u,bp))),axis=2)
+img = np.flip(u.browse2bit(u.stretchNBands(u.cropNZeros(bp))),axis=2)
 cv2.imwrite(savepath+n,img)
 del(img)
 
 bp = p.PFM()
 n = 'PFM'+'.png'
-img = np.flip(u.browse2bit(u.stretchNBands(u,u.cropNZeros(u,bp))),axis=2)
+img = np.flip(u.browse2bit(u.stretchNBands(u.cropNZeros(bp))),axis=2)
 cv2.imwrite(savepath+n,img)
 del(img)
 

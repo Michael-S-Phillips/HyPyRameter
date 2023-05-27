@@ -6,8 +6,6 @@ Created on Sat Feb 25 10:18:52 2023
 @author: phillms1
 """
 
-# -*- coding: utf-8 -*-
-
 import multiprocessing
 from outliers import smirnov_grubbs as grubbs
 import numpy as np
@@ -45,7 +43,7 @@ def get_vote_block(args):
 
 
 def run_vote_block(args, ws, cpus, parallel = False, chunksize = None):
-    if parallel is True:
+    if parallel:
         denom = int(np.ceil(240000000/ws))
         if chunksize is None:
             chunksize = int(np.ceil(np.asarray(args,dtype='object').shape[0]/denom))
@@ -58,7 +56,7 @@ def run_vote_block(args, ws, cpus, parallel = False, chunksize = None):
                     vbsi.append(vb)
             toc = np.round((timeit.default_timer()-tic)/60,2)
             print(f'\n\tgrubbs testing took {toc} minutes')
-    elif parallel is False:
+    else:
         # this has not been tested
-        vbsi = [get_vote_block(grubbs_chunks, windows, i) for i, grubbs_chunks, windows in enumerate(args)]
+        vbsi = [get_vote_block(arg) for arg in args]
     return vbsi
