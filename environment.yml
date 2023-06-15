@@ -1,0 +1,20 @@
+name: hypyrameter
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - numpy
+  - scipy
+  - pandas
+  - matplotlib
+  - jupyter
+  - spectral
+  - opencv
+  - tqdm
+  - pip
+  - setuptools
+  - wheel
+  - pip:
+    - outlier_utils
+    - -e .  # Install hypyrameter in editable mode
+  - python=3.11

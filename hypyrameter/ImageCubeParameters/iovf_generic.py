@@ -3,19 +3,13 @@
 """
 Created on Sat Feb 25 09:50:57 2023
 
-@author: phillms1
-"""
-
-# -*- coding: utf-8 -*-
-"""
-Created on Thu Nov 24 2022
     input: 
         pre_file - HSP_..._PRE.IMG 
         out_dir - output directory
     output:
         flt_ - HSP_..._FLT.IMG saved to output directory.
 
-@author: michael phillips
+@author: phillms1
 """
 import sys
 import os
@@ -54,7 +48,7 @@ class iovf:
         
         self.pre_cube = pre_image
         self.out_dir = out_dir
-        if band_centers != False:
+        if band_centers:
             self.band_centers = band_centers
 
     def get_surrounding_indeces(self,update_indeces,window=None):
@@ -336,7 +330,8 @@ class iovf:
 
         # print(f'\nfilter window size: {window}')
         poly_order = 3
-        if poly_order >= window: poly_order = 1
+        if poly_order >= window: 
+            poly_order = 1
         for i in tqdm(range(rows)):
             for j in range(cols):
                 ref_cube[i,j,:] = signal.savgol_filter(ref_cube[i,j,:], window, 3, mode='mirror')
@@ -438,7 +433,7 @@ class iovf:
         threshold = 0
         regress_count = 0
         
-        while v is True:
+        while v:
             
             print('\n********************************\n*                              *')
             print(f'* starting round {r} of voting   *')
@@ -459,7 +454,7 @@ class iovf:
                 v = bool((np.shape(update_indeces)[1])>threshold)
                 print(f'condition: {v}')
                 
-                if view_votes is True:
+                if view_votes:
                     # plot the vote cube ***************
                     plt_vc = np.where(self.vc>=vt, self.vc, 0)
                     plt.imshow(np.sum(plt_vc,axis=2))
@@ -487,7 +482,7 @@ class iovf:
                 
                 self.voting_record.append(np.shape(update_indeces)[1])
                 
-                if view_votes is True:
+                if view_votes:
                     # plot the vote cube ***************
                     plt_vc = np.where(self.vc>=vt, self.vc, 0)
                     plt.imshow(np.sum(plt_vc,axis=2))
@@ -756,7 +751,7 @@ class iovf:
         time2 = np.round((timeit.default_timer()-time1)/60,2)
         print(f'filtering took {time2} minutes')
             
-        if save is True:
+        if save:
             self.write_FLT()
             
         t1 = np.round((timeit.default_timer()-t0)/60,2)

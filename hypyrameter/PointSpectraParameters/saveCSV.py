@@ -9,7 +9,7 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from oreXpressParamCalculator import oreXpressParamCalculator
+from paramCalculator import oreXpressParamCalculator
 from readSed import *
 from readLibrary import *
 

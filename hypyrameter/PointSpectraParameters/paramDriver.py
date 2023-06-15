@@ -9,11 +9,11 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from oreXpressParamCalculator import oreXpressParamCalculator
+from paramCalculator import oreXpressParamCalculator
 from readSed import *
 from readLibrary import *
 
-date_ = '220802'
+date_ = '220714'
 sol_ = 'Sol106'
 mission_ = 'LabSamples'
 rootPath = f'/Volumes/HySpex_Back/RAVEN/FieldSeason_2022/oreXpress/{date_}/{mission_}/'
@@ -42,6 +42,7 @@ spectra = df.iloc[:,1:]
 specNames = list(spectra.columns)
 paramNames = ['OLINDEX3','LCPINDEX2','HCPINDEX2','BDI1000VIS','BD530_2','BD920_2','BD2210_2','BD2190','D2165','BD2250','BD2355','BD2290','D2300','D2200','BD1900r2','MIN2295_248','MIN2345_253','BDCARB','SINDEX2','BD2100_2','BD1900_2','MIN2250','BD2250','BD1900r2']#,'ISLOPE','BD1400','IRR2']
 
+# instantiate parameter data frame
 pdf_ = np.empty((len(paramNames),len(specNames)))
 # pd.DataFrame(paramNames)
 # paramDF.columns = list(specNames)
@@ -91,7 +92,7 @@ paramDF = pd.DataFrame(pdf_,columns=specNames)
 
 
 #%% plot cell
-import os
+
 # dateStr = '220724' #YYMMDD
 # figSavePath = rootPath+'Output/'+dateStr+'/'
 figSavePath = rootPath+f'{target_}/ParameterOutput/'
@@ -117,7 +118,6 @@ for i in range(np.shape(paramDF)[1]):
 
 
 #%% Nathan's spectra cell
-import os
 # dateStr = '220724' #YYMMDD
 # figSavePath = rootPath+'Output/'+dateStr+'/'
 figSavePath = rootPath+f'{target_}/ParameterOutput/'
