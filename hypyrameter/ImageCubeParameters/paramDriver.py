@@ -42,15 +42,6 @@ jhdr = data_path + '/EMIT_L2A_RFL_001_20230329T145406_2308809_052_reflectance_cr
 # p = paramCalculator(data_path,sfile=shdr)
 p = paramCalculator(data_path,jfile=jhdr)
 
-'''
-there is a "denoise" option in the paramCalculator. It uses the non-global meets local 
-low-rank tensor solution from this paper https://ieeexplore.ieee.org/document/9208755. 
-Based on experience, I recommend caution if using this denoise routine because it can change
-your data in unexpected and non-ideal ways. If your image has < 2 million pixels, 
-(or if you have a system with a lot of memory and compute power) you can use
-the iovf_generic noise remediation routine that is in the attached .py document with 
-the same name. This works quite well and applies noise remediation with a light touch.
-'''
 # interpolate through NaNs - this only works if the nan values are at consistent wavelengths across the whole cube
 # p.j = np.where(p.j<0,np.nan, p.j)
 # interp = interpNaNs(p.j, p.j_bands)
