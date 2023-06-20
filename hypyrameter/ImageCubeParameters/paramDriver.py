@@ -25,7 +25,8 @@ from interpNans import interpNaNs
 #%% data ingestion and paramCalculator initiation
 
 # Path to your data directory
-data_path = os.path.abspath(os.path.join('../../data/HyPyRameter/data'))
+# data_path = os.path.abspath(os.path.join('../../data/HyPyRameter/data'))
+data_path = os.path.abspath(os.path.join('/Volumes/Arrakis/HySpex_Iceland/HyPyRameter/data'))
 
 # path to your ENVI .hdr file. For VNIR (400-1000 nm) files use vhdr, for SWIR (1000-2600 nm) files use shdr 
 file_name = 'EMIT_L2A_RFL_001_20230329T145406_2308809_052_reflectance_cropped'
@@ -78,7 +79,7 @@ calculate spectral parameters from SWIR image data, save as .img and as .png
 #------------------------------------------------------------------------------
 
 # full path for the output parameter ENVI file
-sParams_file_name = savepath+'/'+file_name+'_params.hdr'
+sParams_file_name = savepath+file_name+'_params.hdr'
 
 if p.sfile is not None:
     paramList = ['OLINDEX3','LCPINDEX2','HCPINDEX2','BD1400','BD1450', 'BD1900_2',
@@ -290,12 +291,11 @@ use with the vhdr option
 jParams_file_name = savepath+'/' + file_name + '_params.hdr'
 
 if p.jfile is not None:
-    paramList = ['R637','R550','R463','SH460','BD530_2','BD670','D700','BD875','BD920_2','RPEAK1','BDI1000VIS','ELMSUL',
-                 'OLINDEX3','LCPINDEX2','HCPINDEX2','BD1400','BD1450', 'BD1900_2',
-                 'BD1900r2','BD2100_2','BD2165','BD2190','BD2210_2','BD2250','BD2290',
+    paramList = ['R637','R550','R463','D460','BD530_2','BD670','D700','BD875','BD920_2','RPEAK1','BDI1000VIS',
+                 'OLINDEX3','LCPINDEX2','HCPINDEX2','BD1200','BD1400','BD1450', 'BD1900_2',
+                 'BD1900r2','BD2100_2','BD2210_2','BD2100_3','BD2165','BD2190','BD2250','BD2290',
                  'BD2355','BDCARB','D2200','D2300','IRR2','ISLOPE','MIN2250','MIN2295_2480',
-                 'MIN2345_2537','R2529', 'R1506', 'R1080','SINDEX2','BD1200','BD2100_3','GypTrip',
-                 'ILL']
+                 'MIN2345_2537','R2529', 'R1506', 'R1080','SINDEX2','GINDEX']
     jMeta = p.j_.metadata.copy()
     jMeta['wavelength'] = paramList
     jMeta['band names'] = paramList
@@ -411,7 +411,7 @@ if p.jfile is not None:
     n = '/LIC.png'
     cv2.imwrite(savepath+n, LIC)
     
-    i0 = paramList.index('GypTrip')
+    i0 = paramList.index('GINDEX')
     i1 = paramList.index('BD2165')
     i2 = paramList.index('BD1900_2')
     GYP = u.buildSummary(jParams[:,:,i0], jParams[:,:,i1], jParams[:,:,i2])
@@ -420,8 +420,8 @@ if p.jfile is not None:
     cv2.imwrite(savepath+n, GYP)
     
     i0 = paramList.index('BDCARB')
-    i1 = paramList.index('ILL')
-    i2 = paramList.index('GypTrip')
+    i1 = paramList.index('BD2100_3')
+    i2 = paramList.index('GINDEX')
     SED = u.buildSummary(jParams[:,:,i0], jParams[:,:,i1], jParams[:,:,i2])
     SED = np.flip(u.browse2bit(u.stretchNBands(u.cropNZeros(SED))),axis=2)
     n = '/SED.png'

@@ -204,6 +204,8 @@ class paramCalculator:
     # -------------------------------------------------------------------------
     # parameter library
     # -------------------------------------------------------------------------
+
+    # Index parameters
     def HCPINDEX2(self):
 
         # extract data from image cube
@@ -307,120 +309,188 @@ class paramCalculator:
         nmin = np.nanmin(np.where(img>-np.inf,img,np.nan))
         img = np.where(img>-np.inf,img,nmin)
         return img
-    # old, but functional, RPEAK1
-    def RPEAK1(self):
-
-        rp_wv = [442,533,600,710,740,775,800,833,860,892,925,963]
-        rp_i = [self.wvt.index(u.getClosestWavelength(i,self.wvt)) for i in rp_wv]
-        rp_w = [u.getClosestWavelength(i,self.wvt) for i in rp_wv]
-        rp_ = self.cube[:,:,rp_i]
-        x_ = np.linspace(rp_w[0],rp_w[-1],num=521)
-        flatShape=(np.shape(rp_)[0]*np.shape(rp_)[1],np.shape(rp_)[2])       
-        rp_l = np.zeros(flatShape[0])#[]#np.empty(flatShape[0])
-        rp_r = np.zeros(flatShape[0])#[]#np.empty(flatShape[0])
-        rp_flat = np.reshape(rp_,flatShape)
-        # nanIndeces = np.where(rp_flat==0.0)
-        goodIndeces = np.where(rp_flat!=0.0)
-        goodIndx = np.unique(goodIndeces[0])
-        # nanIndx = np.flipud(np.unique(nanIndeces[0]))
-        # rp_flat_nan_index = np.where(rp_flat is np.nan)
-        # coefs=[]
-        poly=[]
-        print('\tpreparing polynomial arguments')
-        # could try to parallelize this
-        # coefs=[np.polyfit(rp_w, rp_flat[i,:], 5) for i in tqdm(goodIndx)]
-        # print('\tcreating polynomial functions')
-        # poly=[np.poly1d(coefs[i]) for i in tqdm(list(range(len(coefs))))]
-        
-        # parallel attempt
-        args = [(rp_w,rp_flat[i,:],5) for i in tqdm(goodIndx)]
-        print('\n\tcalculating polynomials')
-        with mp.Pool(6) as pool:
-            for p in pool.imap(u.getPoly,args):
-                poly.append(p)
-            
-        print('\treturning peak reflectance and wavelengths of peak reflectance')
-        for j,i in tqdm(enumerate(goodIndx)):
-            rp_l[i] = x_[list(poly[j](x_)).index(np.nanmax(poly[j](x_)))]/1000 
-            rp_r[i] = np.nanmax(poly[j](x_)) 
-        
-        print('\tre-shaping arrays')
-        shape2d = (np.shape(rp_)[0],np.shape(rp_)[1])
-        rp_l=np.reshape(rp_l,shape2d)
-        rp_r=np.reshape(rp_r,shape2d)
-        return rp_l,rp_r
     
-    def BDI1000VIS(self,rp_r=None):
-            
-        if rp_r is None:
-            rp_l, rp_r = self.RPEAK1()
-            
-        # multispectral version
-        # bdi_wv = [833,860,892,925,951,984,989] 
-        # vi = [self.wvt.index(u.getClosestWavelength(i,self.wvt)) for i in bdi_wv]
-        # wv_um = [u.getClosestWavelength(i,self.wvt)/1000 for i in bdi_wv]
-        # wv_ = np.linspace(wv_um[0],wv_um[-1],num=201)
-        
-        vi0 = self.wvt.index(u.getClosestWavelength(833,self.wvt))
-        vi1 = self.wvt.index(u.getClosestWavelength(989,self.wvt))
-        n = vi1-vi0 + 1
-        vi = np.linspace(vi0,vi1,n,dtype=int)
-        wv_um = [self.wvt[i]/1000 for i in vi]
-        bdi1000_cube = self.cube[:,:,vi]
-        bdi_norm = np.empty(np.shape(bdi1000_cube))
-        print('\tnormalizing input data')
-        for b in tqdm(range(len(vi))):
-            bdi_norm[:,:,b] = bdi1000_cube[:,:,b]/rp_r
-        
-        flatShape=(np.shape(bdi_norm)[0]*np.shape(bdi_norm)[1],np.shape(bdi_norm)[2])       
-        bdi1000vis_value = np.zeros(flatShape[0])
-        bdi_norm_flat = np.reshape(bdi_norm,flatShape)
-        args = []
-        bdi1000vis_value = []
-        print('\tpreparing polynomial arguments')
-        for i in tqdm(range(flatShape[0])):
-            spec_vec = bdi_norm_flat[i,:]
-            keepIndx = np.where(~np.isnan(spec_vec))[0]
-            wv_um_ = [wv_um[q] for q in keepIndx]
-            spec_vec_ = [spec_vec[q] for q in keepIndx]
-            args.append((wv_um_,spec_vec_,4))
-        print('\treturning integrated polynomial values')
-        with mp.Pool(6) as pool:
-            for integ in pool.imap(u.getPolyInt,args):
-                bdi1000vis_value.append(integ)
-        
-        print('\treshaping array')
-        bdi1000vis_value = np.reshape(bdi1000vis_value,(np.shape(bdi_norm)[0],np.shape(bdi_norm)[1]))
-        
-        # old
-        # bdi1000vis_value = np.empty((np.shape(cube)[0],np.shape(cube)[1]))
-        # for i in tqdm(range(np.shape(cube)[0])):
-        #     for j in range(np.shape(cube)[1]):
-        #         spec_vec = bdi_norm[i,j,:]
-        #         try:
-        #             coefs = np.polyfit(wv_um,spec_vec,4)
-        #             poly = np.poly1d(coefs)
-        #             pint = np.poly1d(poly.integ())
-        #             bdi1000vis_value[i,j] = pint(wv_um[-1])-pint(wv_um[0])#it.(wv_um,1.0-spec_vec)
-        #         except:
-        #             bdi1000vis_value[i,j] = np.nan
-        return bdi1000vis_value
-    def SH460(self):
-            
-        img = u.getBandDepthInvert(self.cube, self.wvt, 420, 460, 520)
+    def SINDEX2(self):
+        img = u.getBandDepthInvert(self.cube,self.wvt,2120, 2290, 2400,mw=7,hw=3)
         return img
+    
+    def GINDEX(self):
+        t1 = u.getBandDepth(self.cube,self.wvt,1420,1463)
+        t2 = u.getBandDepth(self.cube,self.wvt,1463,1515)
+        t3 = u.getBandDepth(self.cube,self.wvt,1515,1576)
+        b1 = t1*t2*t3
+        b2 = self.BD1750()
+        img = b1+b2
+        return img
+    # -----------------------------------------------------------------------------------------------
+    # Band Depth (BD) Parameters
     def BD530_2(self):
-
         img = u.getBandDepth(self.cube, self.wvt, 440, 530, 614)
         return img
+    
     def BD670(self):
         # this is a custom parameter
-
         img = u.getBandDepth(self.cube, self.wvt, 620, 670, 745)
         return img
+    
+    def BD875(self):
+        # this is a custom parameter
+        img = u.getBandDepth(self.cube, self.wvt, 747, 875, 980)
+        return img
+    
+    def BD920_2(self):
+        img = u.getBandDepth(self.cube,self.wvt,807,920,984)
+        return img
+    
+    def BD1200(self):
+        img = u.getBandDepth(self.cube, self.wvt, 1115, 1260)
+        return img
+    
+    def BD1400(self):
+        img = u.getBandDepth(self.cube, self.wvt, 1330, 1395, 1467, mw=3)
+        return img
+    
+    def BD1450(self):
+        img = u.getBandDepth(self.cube, self.wvt, 1340, 1450, 1535, mw=3)
+        return img
+    
+    def BD1750(self):
+        img = u.getBandDepth(self.cube, self.wvt, 1688, 1820)
+        return img
+    
+    def BD1900_2(self):
+        img = u.getBandDepth(self.cube,self.wvt,1850, 1930, 2067)
+        return img
+    
+    def BD1900r2(self):
+        # img = u.getBandArea(self.cube, self.wvt, 1800, 2000)
+        extract individual channels, replacing CRISM_NANs with IEEE_NaNs
+        R1908 = u.getBand(self.cube,self.wvt,1908, kwidth = 1) 
+        R1914 = u.getBand(self.cube,self.wvt,1914, kwidth = 1) 
+        R1921 = u.getBand(self.cube,self.wvt,1921, kwidth = 1) 
+        R1928 = u.getBand(self.cube,self.wvt,1928, kwidth = 1) 
+        R1934 = u.getBand(self.cube,self.wvt,1934, kwidth = 1) 
+        R1941 = u.getBand(self.cube,self.wvt,1941, kwidth = 1) 
+        R1862 = u.getBand(self.cube,self.wvt,1862, kwidth = 1) 
+        R1869 = u.getBand(self.cube,self.wvt,1869, kwidth = 1) 
+        R1875 = u.getBand(self.cube,self.wvt,1875, kwidth = 1) 
+        R2112 = u.getBand(self.cube,self.wvt,2112, kwidth = 1) 
+        R2120 = u.getBand(self.cube,self.wvt,2120, kwidth = 1) 
+        R2126 = u.getBand(self.cube,self.wvt,2126, kwidth = 1) 
+        
+        R1815 = u.getBand(self.cube, self.wvt, 1815);
+        R2132 = u.getBand(self.cube, self.wvt, 2132); 
+        
+        # retrieve the CRISM wavelengths nearest the requested values
+        W1908 = u.getClosestWavelength(1908, self.wvt)
+        W1914 = u.getClosestWavelength(1914, self.wvt)
+        W1921 = u.getClosestWavelength(1921, self.wvt)
+        W1928 = u.getClosestWavelength(1928, self.wvt)
+        W1934 = u.getClosestWavelength(1934, self.wvt)
+        W1941 = u.getClosestWavelength(1941, self.wvt)
+        W1862 = u.getClosestWavelength(1862, self.wvt)#
+        W1869 = u.getClosestWavelength(1869, self.wvt)
+        W1875 = u.getClosestWavelength(1875, self.wvt)
+        W2112 = u.getClosestWavelength(2112, self.wvt)
+        W2120 = u.getClosestWavelength(2120, self.wvt)
+        W2126 = u.getClosestWavelength(2126, self.wvt)
+        W1815 = u.getClosestWavelength(1815, self.wvt)#  
+        W2132 = u.getClosestWavelength(2132, self.wvt) 
+        
+        # compute the interpolated continuum values at selected wavelengths between 1815 and 2530
+        slope = (R2132 - R1815)/(W2132 - W1815)
+        CR1908 = R1815 + slope *(W1908 - W1815)
+        CR1914 = R1815 + slope *(W1914 - W1815)
+        CR1921 = R1815 + slope *(W1921 - W1815) 
+        CR1928 = R1815 + slope *(W1928 - W1815)
+        CR1934 = R1815 + slope *(W1934 - W1815)
+        CR1941 = R1815 + slope *(W1941 - W1815) 
+           
+        CR1862 = R1815 + slope*(W1862 - W1815)
+        CR1869 = R1815 + slope*(W1869 - W1815)
+        CR1875 = R1815 + slope*(W1875 - W1815)    
+        CR2112 = R1815 + slope*(W2112 - W1815)
+        CR2120 = R1815 + slope*(W2120 - W1815)
+        CR2126 = R1815 + slope*(W2126 - W1815)
+        img= 1.0-((R1908/CR1908+R1914/CR1914+R1921/CR1921+R1928/CR1928+R1934/CR1934+R1941/CR1941)/(R1862/CR1862+R1869/CR1869+R1875/CR1875+R2112/CR2112+R2120/CR2120+R2126/CR2126))
+        nmin = np.nanmin(np.where(img>-np.inf,img,np.nan))
+        img = np.where(img>-np.inf,img,nmin)
+        return img
+
+    def BD2100_2(self):
+        img = u.getBandDepth(self.cube,self.wvt,1930, 2132, 2250,lw=3,hw=3)
+        return img
+    
+    def BD2100_3(self):
+        img = u.getBandDepth(self.cube, self.wvt, 2016, 2220)
+        return img
+    
+    def BD2165(self):
+        img = u.getBandDepth(self.cube,self.wvt,2120,2165,2230,mw=3,hw=3) #(kaolinite group)
+        return img
+    
+    def BD2190(self):
+        img = u.getBandDepth(self.cube,self.wvt,2120,2185,2250,mw=3,hw=3) #(Beidellite, Allophane)
+        return img
+    
+    def BD2210_2(self):
+        img = u.getBandDepth(self.cube,self.wvt,2165,2210,2290) #(kaolinite group)
+        return img
+    
+    def BD2250(self):
+        img = u.getBandDepth(self.cube,self.wvt,2120, 2245, 2340,mw=7,hw=3) 
+        return img
+    
+    def BD2290(self):
+        img = u.getBandDepth(self.cube,self.wvt,2250, 2290, 2350) #(fe/mg phyllo group)
+        return img
+    
+    def BD2355(self):
+        img = u.getBandDepth(self.cube,self.wvt,2300, 2355, 2450) #(fe/mg phyllo group)
+        return img  
+      
+    def BDCARB(self):
+        # alternative formulation
+        # b1 = u.getBandDepth(self.cube,self.wvt,2220,2375)
+        # b2 = u.getBandDepth(self.cube,self.wvt,2400,2500)
+        # img = b1+b2
+
+        # extract channels, replacing CRISM_NAN with IEEE NAN
+        R2230 = u.getBand(self.cube, self.wvt, 2230)
+        R2320 = u.getBand(self.cube, self.wvt, 2320)
+        R2330 = u.getBand(self.cube, self.wvt, 2330)
+        R2390 = u.getBand(self.cube, self.wvt, 2390)
+        R2520 = u.getBand(self.cube, self.wvt, 2520)
+        R2530 = u.getBand(self.cube, self.wvt, 2530)
+        R2600 = u.getBand(self.cube, self.wvt, 2600)
+    
+        # identify nearest wavelengths
+        WL1 = u.getClosestWavelength(2230,self.wvt)
+        WC1 = (u.getClosestWavelength(2330,self.wvt)+u.getClosestWavelength(2320,self.wvt))*0.5
+        WH1 = u.getClosestWavelength(2390,self.wvt)
+        a =  (WC1 - WL1)/(WH1 - WL1)  # a gets multipled by the longer (higher wvln)  band
+        b = 1.0-a                     # b gets multiplied by the shorter (lower wvln) band
+    
+        WL2 =  u.getClosestWavelength(2390,self.wvt)
+        WC2 = (u.getClosestWavelength(2530,self.wvt) + u.getClosestWavelength(2520,self.wvt))*0.5
+        WH2 =  u.getClosestWavelength(2600,self.wvt)
+        c = (WC2 - WL2)/(WH2 - WL2)   # c gets multipled by the longer (higher wvln)  band
+        d = 1.0-c                           # d gets multiplied by the shorter (lower wvln) band
+    
+        # compute bdcarb
+        img = 1.0 - (np.sqrt((((R2320 + R2330)*0.5)/(b*R2230 + a*R2390))*(((R2520 + R2530)*0.5)/(d*R2390 + c*R2600))))
+        nmin = np.nanmin(np.where(img>-np.inf,img,np.nan))
+        img = np.where(img>-np.inf,img,nmin)
+        return img
+    
+    def D460(self):
+        img = u.getBandDepthInvert(self.cube, self.wvt, 420, 460, 520)
+        return img
+    
+# -----------------------------------------------------------------------------------------------
+# Depth (D) parameters
     def D700(self):
         # a custom parameter for chlorophyll
-        
         # extract individual channels
         R630 = u.getBand(self.cube,self.wvt,630)
         R740 = u.getBand(self.cube,self.wvt,740)
@@ -455,64 +525,8 @@ class paramCalculator:
         nmin = np.nanmin(np.where(img>-np.inf,img,np.nan))
         img = np.where(img>-np.inf,img,nmin) 
         return img
-    def BD875(self):
-        # this is a custom parameter
-            
-        img = u.getBandDepth(self.cube, self.wvt, 747, 875, 980)
-        return img
-    def BD920_2(self):
-            
-        img = u.getBandDepth(self.cube,self.wvt,807,920,984)
-        return img
-    def ELMSUL(self):
-        # this is a custom parameter
-            
-        R400 = u.getBand(self.cube, self.wvt, 400,kwidth=1)
-        R430 = u.getBand(self.cube, self.wvt, 430)
-        R525 = u.getBand(self.cube, self.wvt, 525)
-        R900 = u.getBand(self.cube, self.wvt, 900)
-        W400 = u.getClosestWavelength(400, self.wvt)
-        W430 = u.getClosestWavelength(430, self.wvt)
-        W525 = u.getClosestWavelength(525, self.wvt)
-        W900 = u.getClosestWavelength(900, self.wvt)
-        # want in units of reflectance / um
-        s1 = 1000*np.abs((R400-R430)/(W430-W400)) #should be small (close to zero)
-        s2 = 1000*(R525-R430)/(W525-W430) #should be large
-        s3 = 1000*np.abs((R900-R525)/(W900-W525)) #should be small (close to zero)
-        img = s2-(s1+s3)
-        return img, s3
-    def BD2210_2(self):
-
-        # img = u.getBandDepth(self.cube,self.wvt,2165,2210,2290) #(kaolinite group)
-        img = u.getBandArea(self.cube, self.wvt, 2165, 2290)
-        return img
-    def BD2190(self):
-
-        # img = u.getBandDepth(self.cube,self.wvt,2120,2185,2250,mw=3,hw=3) #(Beidellite, Allophane)
-        img = u.getBandArea(self.cube, self.wvt, 2120, 2250)
-        return img
-    def BD2250(self):
-
-        # img = u.getBandDepth(self.cube,self.wvt,2120, 2245, 2340,mw=7,hw=3) 
-        img = u.getBandArea(self.cube, self.wvt, 2120, 2340)
-        return img
-    def BD2165(self):
-
-        # img = u.getBandDepth(self.cube,self.wvt,2120,2165,2230,mw=3,hw=3) #(kaolinite group)
-        img = u.getBandArea(self.cube, self.wvt, 2120, 2230)
-        return img
-    def BD2355(self):
-
-        # img = u.getBandDepth(self.cube,self.wvt,2300, 2355, 2450) #(fe/mg phyllo group)
-        img = u.getBandArea(self.cube, self.wvt, 2300, 2450)
-        return img
-    def BD2290(self):
-
-        # img = u.getBandDepth(self.cube,self.wvt,2250, 2290, 2350) #(fe/mg phyllo group)
-        img = u.getBandArea(self.cube, self.wvt, 2210, 2350)
-        return img
+    
     def D2200(self):
-        
         # extract individual channels
         R1815 = u.getBand(self.cube, self.wvt,1815, kwidth=5)
         R2165 = u.getBand(self.cube, self.wvt,2165)
@@ -575,67 +589,12 @@ class paramCalculator:
         nmin = np.nanmin(np.where(img>-np.inf,img,np.nan))
         img = np.where(img>-np.inf,img,nmin) 
         return img
-    def BD1900r2(self):
-            
-        img = u.getBandArea(self.cube, self.wvt, 1800, 2000)
-        # extract individual channels, replacing CRISM_NANs with IEEE_NaNs
-        # R1908 = u.getBand(self.cube,self.wvt,1908, kwidth = 1) 
-        # R1914 = u.getBand(self.cube,self.wvt,1914, kwidth = 1) 
-        # R1921 = u.getBand(self.cube,self.wvt,1921, kwidth = 1) 
-        # R1928 = u.getBand(self.cube,self.wvt,1928, kwidth = 1) 
-        # R1934 = u.getBand(self.cube,self.wvt,1934, kwidth = 1) 
-        # R1941 = u.getBand(self.cube,self.wvt,1941, kwidth = 1) 
-        # R1862 = u.getBand(self.cube,self.wvt,1862, kwidth = 1) 
-        # R1869 = u.getBand(self.cube,self.wvt,1869, kwidth = 1) 
-        # R1875 = u.getBand(self.cube,self.wvt,1875, kwidth = 1) 
-        # R2112 = u.getBand(self.cube,self.wvt,2112, kwidth = 1) 
-        # R2120 = u.getBand(self.cube,self.wvt,2120, kwidth = 1) 
-        # R2126 = u.getBand(self.cube,self.wvt,2126, kwidth = 1) 
-        
-        # R1815 = u.getBand(self.cube, self.wvt, 1815);
-        # R2132 = u.getBand(self.cube, self.wvt, 2132); 
-        
-        # # retrieve the CRISM wavelengths nearest the requested values
-        # W1908 = u.getClosestWavelength(1908, self.wvt)
-        # W1914 = u.getClosestWavelength(1914, self.wvt)
-        # W1921 = u.getClosestWavelength(1921, self.wvt)
-        # W1928 = u.getClosestWavelength(1928, self.wvt)
-        # W1934 = u.getClosestWavelength(1934, self.wvt)
-        # W1941 = u.getClosestWavelength(1941, self.wvt)
-        # W1862 = u.getClosestWavelength(1862, self.wvt)#
-        # W1869 = u.getClosestWavelength(1869, self.wvt)
-        # W1875 = u.getClosestWavelength(1875, self.wvt)
-        # W2112 = u.getClosestWavelength(2112, self.wvt)
-        # W2120 = u.getClosestWavelength(2120, self.wvt)
-        # W2126 = u.getClosestWavelength(2126, self.wvt)
-        # W1815 = u.getClosestWavelength(1815, self.wvt)#  
-        # W2132 = u.getClosestWavelength(2132, self.wvt) 
-        
-        # # compute the interpolated continuum values at selected wavelengths between 1815 and 2530
-        # slope = (R2132 - R1815)/(W2132 - W1815)
-        # CR1908 = R1815 + slope *(W1908 - W1815)
-        # CR1914 = R1815 + slope *(W1914 - W1815)
-        # CR1921 = R1815 + slope *(W1921 - W1815) 
-        # CR1928 = R1815 + slope *(W1928 - W1815)
-        # CR1934 = R1815 + slope *(W1934 - W1815)
-        # CR1941 = R1815 + slope *(W1941 - W1815) 
-           
-        # CR1862 = R1815 + slope*(W1862 - W1815)
-        # CR1869 = R1815 + slope*(W1869 - W1815)
-        # CR1875 = R1815 + slope*(W1875 - W1815)    
-        # CR2112 = R1815 + slope*(W2112 - W1815)
-        # CR2120 = R1815 + slope*(W2120 - W1815)
-        # CR2126 = R1815 + slope*(W2126 - W1815)
-        # img= 1.0-((R1908/CR1908+R1914/CR1914+R1921/CR1921+R1928/CR1928+R1934/CR1934+R1941/CR1941)/(R1862/CR1862+R1869/CR1869+R1875/CR1875+R2112/CR2112+R2120/CR2120+R2126/CR2126))
-        # nmin = np.nanmin(np.where(img>-np.inf,img,np.nan))
-        # img = np.where(img>-np.inf,img,nmin)
-        return img
+    
+# -----------------------------------------------------------------------------------------------
+# Minimum (MIN) parameters
     def MIN2295_2480(self):
-
-        # img1 = u.getBandDepth(self.cube, self.wvt,2165,2295,2364)
-        # img2 = u.getBandDepth(self.cube,self.wvt,2364,2480,2570)
-        img1 = u.getBandArea(self.cube, self.wvt,2165,2295,2364)
-        img2 = u.getBandArea(self.cube,self.wvt,2364,2480,2570)
+        img1 = u.getBandDepth(self.cube, self.wvt,2165,2295,2364)
+        img2 = u.getBandDepth(self.cube,self.wvt,2364,2480,2570)
         img3 = np.empty((np.shape(img1)[0],np.shape(img1)[1],2))
         img3[:,:,0] = img1
         img3[:,:,1] = img2
@@ -643,12 +602,10 @@ class paramCalculator:
         nmin = np.nanmin(np.where(img>-np.inf,img,np.nan))
         img = np.where(img>-np.inf,img,nmin)
         return img
+    
     def MIN2250(self):
-
-        # img1 = u.getBandDepth(self.cube, self.wvt,2165, 2210, 2350)
-        # img2 = u.getBandDepth(self.cube,self.wvt,2165, 2265, 2350)
-        img1 = u.getBandArea(self.cube, self.wvt,2165, 2210, 2350)
-        img2 = u.getBandArea(self.cube,self.wvt,2165, 2265, 2350)
+        img1 = u.getBandDepth(self.cube, self.wvt,2165, 2210, 2350)
+        img2 = u.getBandDepth(self.cube,self.wvt,2165, 2265, 2350)
         img3 = np.empty((np.shape(img1)[0],np.shape(img1)[1],2))
         img3[:,:,0] = img1
         img3[:,:,1] = img2
@@ -656,66 +613,96 @@ class paramCalculator:
         nmin = np.nanmin(np.where(img>-np.inf,img,np.nan))
         img = np.where(img>-np.inf,img,nmin)
         return img
+    
     def MIN2345_2537(self):
-
-        # img1 = u.getBandDepth(self.cube, self.wvt,2250, 2345, 2430)
-        # img2 = u.getBandDepth(self.cube,self.wvt,2430, 2537, 2602)
-        img1 = u.getBandArea(self.cube, self.wvt,2250, 2345, 2430)
-        img2 = u.getBandArea(self.cube,self.wvt,2430, 2537, 2602)
+        img1 = u.getBandDepth(self.cube, self.wvt,2250, 2345, 2430)
+        img2 = u.getBandDepth(self.cube,self.wvt,2430, 2537, 2602)
         img3 = np.empty((np.shape(img1)[0],np.shape(img1)[1],2))
         img3[:,:,0] = img1
         img3[:,:,1] = img2
         img = np.min(img3,axis=2)
         nmin = np.nanmin(np.where(img>-np.inf,img,np.nan))
         img = np.where(img>-np.inf,img,nmin)
-        return img    
-    def BDCARB(self):
-
-        b1 = u.getBandArea(self.cube,self.wvt,2220,2375)
-        b2 = u.getBandArea(self.cube,self.wvt,2400,2500)
-        img = b1+b2
-        # extract channels, replacing CRISM_NAN with IEEE NAN
-        # R2230 = u.getBand(self.cube, self.wvt, 2230)
-        # R2320 = u.getBand(self.cube, self.wvt, 2320)
-        # R2330 = u.getBand(self.cube, self.wvt, 2330)
-        # R2390 = u.getBand(self.cube, self.wvt, 2390)
-        # R2520 = u.getBand(self.cube, self.wvt, 2520)
-        # R2530 = u.getBand(self.cube, self.wvt, 2530)
-        # R2600 = u.getBand(self.cube, self.wvt, 2600)
+        return img
     
-        # # identify nearest wavelengths
-        # WL1 = u.getClosestWavelength(2230,self.wvt)
-        # WC1 = (u.getClosestWavelength(2330,self.wvt)+u.getClosestWavelength(2320,self.wvt))*0.5
-        # WH1 = u.getClosestWavelength(2390,self.wvt)
-        # a =  (WC1 - WL1)/(WH1 - WL1)  # a gets multipled by the longer (higher wvln)  band
-        # b = 1.0-a                     # b gets multiplied by the shorter (lower wvln) band
+# -----------------------------------------------------------------------------------------------
+# All other parameters (ratios, slopes, peaks)
+    def RPEAK1(self):
+        # old, but functional, RPEAK1
+        rp_wv = [442,533,600,710,740,775,800,833,860,892,925,963]
+        rp_i = [self.wvt.index(u.getClosestWavelength(i,self.wvt)) for i in rp_wv]
+        rp_w = [u.getClosestWavelength(i,self.wvt) for i in rp_wv]
+        rp_ = self.cube[:,:,rp_i]
+        x_ = np.linspace(rp_w[0],rp_w[-1],num=521)
+        flatShape=(np.shape(rp_)[0]*np.shape(rp_)[1],np.shape(rp_)[2])       
+        rp_l = np.zeros(flatShape[0])#[]#np.empty(flatShape[0])
+        rp_r = np.zeros(flatShape[0])#[]#np.empty(flatShape[0])
+        rp_flat = np.reshape(rp_,flatShape)
+        goodIndeces = np.where(rp_flat!=0.0)
+        goodIndx = np.unique(goodIndeces[0])
+        poly=[]
+        print('\tpreparing polynomial arguments')
+        # parallel attempt
+        args = [(rp_w,rp_flat[i,:],5) for i in tqdm(goodIndx)]
+        print('\n\tcalculating polynomials')
+        with mp.Pool(6) as pool:
+            for p in pool.imap(u.getPoly,args):
+                poly.append(p)
+            
+        print('\treturning peak reflectance and wavelengths of peak reflectance')
+        for j,i in tqdm(enumerate(goodIndx)):
+            rp_l[i] = x_[list(poly[j](x_)).index(np.nanmax(poly[j](x_)))]/1000 
+            rp_r[i] = np.nanmax(poly[j](x_)) 
+        
+        print('\tre-shaping arrays')
+        shape2d = (np.shape(rp_)[0],np.shape(rp_)[1])
+        rp_l=np.reshape(rp_l,shape2d)
+        rp_r=np.reshape(rp_r,shape2d)
+        return rp_l,rp_r
     
-        # WL2 =  u.getClosestWavelength(2390,self.wvt)
-        # WC2 = (u.getClosestWavelength(2530,self.wvt) + u.getClosestWavelength(2520,self.wvt))*0.5
-        # WH2 =  u.getClosestWavelength(2600,self.wvt)
-        # c = (WC2 - WL2)/(WH2 - WL2)   # c gets multipled by the longer (higher wvln)  band
-        # d = 1.0-c                           # d gets multiplied by the shorter (lower wvln) band
+    def BDI1000VIS(self,rp_r=None):
+        if rp_r is None:
+            rp_l, rp_r = self.RPEAK1()
+            
+        # multispectral version
+        # bdi_wv = [833,860,892,925,951,984,989] 
+        # vi = [self.wvt.index(u.getClosestWavelength(i,self.wvt)) for i in bdi_wv]
+        # wv_um = [u.getClosestWavelength(i,self.wvt)/1000 for i in bdi_wv]
+        # wv_ = np.linspace(wv_um[0],wv_um[-1],num=201)
+        
+        vi0 = self.wvt.index(u.getClosestWavelength(833,self.wvt))
+        vi1 = self.wvt.index(u.getClosestWavelength(989,self.wvt))
+        n = vi1-vi0 + 1
+        vi = np.linspace(vi0,vi1,n,dtype=int)
+        wv_um = [self.wvt[i]/1000 for i in vi]
+        bdi1000_cube = self.cube[:,:,vi]
+        bdi_norm = np.empty(np.shape(bdi1000_cube))
+        print('\tnormalizing input data')
+        for b in tqdm(range(len(vi))):
+            bdi_norm[:,:,b] = bdi1000_cube[:,:,b]/rp_r
+        
+        flatShape=(np.shape(bdi_norm)[0]*np.shape(bdi_norm)[1],np.shape(bdi_norm)[2])       
+        bdi1000vis_value = np.zeros(flatShape[0])
+        bdi_norm_flat = np.reshape(bdi_norm,flatShape)
+        args = []
+        bdi1000vis_value = []
+        print('\tpreparing polynomial arguments')
+        for i in tqdm(range(flatShape[0])):
+            spec_vec = bdi_norm_flat[i,:]
+            keepIndx = np.where(~np.isnan(spec_vec))[0]
+            wv_um_ = [wv_um[q] for q in keepIndx]
+            spec_vec_ = [spec_vec[q] for q in keepIndx]
+            args.append((wv_um_,spec_vec_,4))
+        print('\treturning integrated polynomial values')
+        with mp.Pool(6) as pool:
+            for integ in pool.imap(u.getPolyInt,args):
+                bdi1000vis_value.append(integ)
+        
+        print('\treshaping array')
+        bdi1000vis_value = np.reshape(bdi1000vis_value,(np.shape(bdi_norm)[0],np.shape(bdi_norm)[1]))
+
+        return bdi1000vis_value
     
-        # # compute bdcarb
-        # img = 1.0 - (np.sqrt((((R2320 + R2330)*0.5)/(b*R2230 + a*R2390))*(((R2520 + R2530)*0.5)/(d*R2390 + c*R2600))))
-        # nmin = np.nanmin(np.where(img>-np.inf,img,np.nan))
-        # img = np.where(img>-np.inf,img,nmin)
-        return img
-    def SINDEX2(self):
-
-        # img = u.getBandDepthInvert(self.cube,self.wvt,2120, 2290, 2400,mw=7,hw=3)
-        img = u.getBandAreaInvert(self.cube,self.wvt, 2120, 2400, hw=3)
-        return img
-    def BD2100_2(self):
-
-        # img = u.getBandDepth(self.cube,self.wvt,1930, 2132, 2250,lw=3,hw=3)
-        img = u.getBandArea(self.cube, self.wvt, 1930, 2250)
-        return img
-    def BD1900_2(self):
-
-        # img = u.getBandDepth(self.cube,self.wvt,1850, 1930, 2067)
-        img = u.getBandArea(self.cube, self.wvt, 1850, 2067)
-        return img
     def ISLOPE(self):
 
         # extract individual bands
@@ -730,45 +717,8 @@ class paramCalculator:
         nmin = np.nanmin(np.where(img>-np.inf,img,np.nan))
         img = np.where(img>-np.inf,img,nmin)
         return img
-    def BD1400(self):
-
-        # img = u.getBandDepth(self.cube, self.wvt, 1330, 1395, 1467, mw=3)
-        img = u.getBandArea(self.cube, self.wvt, 1330, 1620)
-        return img
-    def BD1200(self):
-
-        img = u.getBandArea(self.cube, self.wvt, 1115, 1260)
-        return img
-    def BD1450(self):
-
-        # img = u.getBandDepth(self.cube, self.wvt, 1340, 1450, 1535, mw=3)
-        img = u.getBandArea(self.cube, self.wvt, 1340, 1535)
-        return img
-    def BD2100_3(self):
-
-        img = u.getBandArea(self.cube, self.wvt, 2016, 2220)
-        return img
-    def BD1750(self):
-
-        img = u.getBandArea(self.cube, self.wvt, 1688, 1820)
-        return img
-    def GypTrip(self):
-
-        t1 = u.getBandArea(self.cube,self.wvt,1420,1463)
-        t2 = u.getBandArea(self.cube,self.wvt,1463,1515)
-        t3 = u.getBandArea(self.cube,self.wvt,1515,1576)
-        b1 = t1*t2*t3
-        b2 = self.BD1750()
-        img = b1+b2
-        return img
-    def ILL(self):
-
-        a1 = u.getBandArea(self.cube,self.wvt,2160,2273)
-        # a2 = u.getBandArea(self.cube,self.wvt,2280,2375)
-        img = a1
-        return img
+    
     def IRR2(self):
-
         img = u.getBandRatio(self.cube,self.wvt,2530,2210)
         return img
 
@@ -792,7 +742,7 @@ class paramCalculator:
     def SUL(self,norm=False):
         print('calculating SUL browse product')
         tic = timeit.default_timer()
-        p1 = self.SH460()
+        p1 = self.D460()
         p2,p3 = self.ELMSUL()
         if norm:
             p1 = u.normalizeParameter(p1)
