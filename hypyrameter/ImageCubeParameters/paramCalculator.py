@@ -8,12 +8,14 @@ Created on Sun Jul 10 13:33:42 2022
 import numpy as np
 import timeit
 import os
+import cv2
 from matplotlib import pyplot as plt 
 import spectral.io.envi as envi
 import multiprocessing as mp
 import param_utils as u
 from spectral import calc_stats,noise_from_diffs,mnf
 from tqdm import tqdm
+import pandas as pd
 
 
 class paramCalculator:
@@ -61,11 +63,19 @@ class paramCalculator:
         if crop is not None:
             r0,r1,c0,c1 = crop
             self.f = self.f[r0:r1,c0:c1,:]
+
+        if bbl[0] is not None:
+            for i in bbl:
+                self.f[:,:,i] = np.nan
+
         if denoise:
             print('denoising cube')
             self.denoiser(1)
+
         self.cube = self.f
         self.wvt = self.f_bands
+
+        self.validParams = self.determineValidParams()
         
         toc = timeit.default_timer()-tic
         print(f'{np.round(toc/60,2)} minutes to load data')
@@ -91,13 +101,30 @@ class paramCalculator:
         # get wavelength bounds of data
         b_min = np.min(self.f_bands)
         b_max = np.max(self.f_bands)
+
         # get wavelength bounds for each parameter...
-        self.
-        w_bounds = 
-            # need a dictionary of parameters and the min,max wavelengths for each
-        paramDict = self.__dict__.copy()
+        paramList = ['R463', 'R550', 'R637', 'R1080', 'R1506', 'R2529', 'HCPINDEX2', 'LCPINDEX2', 'OLINDEX3', 'SINDEX2', 'GINDEX', 'BD530_2', 'BD670', 'BD875', 'BD920_2', 'BD1200', 'BD1400', 'BD1450', 'BD1750', 'BD1900_2', 'BD1900r2', 'BD2100_2', 'BD2100_3', 'BD2165', 'BD2190', 'BD2210_2', 'BD2250', 'BD2290', 'BD2355', 'BDCARB', 'D460', 'D700', 'D2200', 'D2300', 'MIN2295_2480', 'MIN2250', 'MIN2345_2537', 'RPEAK1', 'BDI1000VIS', 'ISLOPE', 'IRR2']
+        paramDict = paramCalculator.__dict__.copy()
+        w_bounds = [paramDict[param](self,check=True) for param in paramList]
+
         # check against parameter values
-        # return a list of valid parameters
+        validParams = []
+        for bounds, param in zip(w_bounds,paramList):
+            # determine if min bound is valid
+            if bounds[0] > b_min:
+                min_valid = True
+            else:
+                min_valid = False
+            # determine if max bound is valid
+            if bounds[1] < b_max:
+                max_valid = True
+            else:
+                max_valid = False
+            
+            # if one is invalid then reject the parameter, otherwise add it to the list
+            if min_valid and max_valid:
+                validParams.append(param)
+        
         return validParams
     
     # should add denoise routine here once it is fixed
@@ -106,6 +133,49 @@ class paramCalculator:
     # -------------------------------------------------------------------------
     # parameter library
     # -------------------------------------------------------------------------
+
+    # Reflectance (R) parameters
+    def R463(self, check = False):
+        if check:
+            img = (463,463)
+        elif not check:
+            img = u.getBand(self.f,self.f_bands,463)
+        return img
+        
+    def R550(self, check = False):
+        if check:
+            img = (550,550)
+        elif not check:
+            img = u.getBand(self.f,self.f_bands,550)
+        return img
+        
+    def R637(self, check = False):
+        if check:
+            img = (637,637)
+        elif not check:
+            img = u.getBand(self.f,self.f_bands,637)
+        return img
+
+    def R1080(self, check = False):
+        if check:
+            img = (1080,1080)
+        elif not check:
+            img = u.getBand(self.f,self.f_bands,1080)
+        return img
+    
+    def R1506(self, check = False):
+        if check:
+            img = (1506,1506)
+        elif not check:
+            img = u.getBand(self.f,self.f_bands,1506)
+        return img
+    
+    def R2529(self, check = False):
+        if check:
+            img = (2529,2529)
+        elif not check:
+            img = u.getBand(self.f,self.f_bands,2529)
+        return img
 
     # Index parameters
     def HCPINDEX2(self, check = False):
@@ -231,9 +301,9 @@ class paramCalculator:
         if check:
             img = (1420, 1820)
         elif not check:
-            t1 = u.getBandDepth(self.cube,self.wvt,1420,1463)
-            t2 = u.getBandDepth(self.cube,self.wvt,1463,1515)
-            t3 = u.getBandDepth(self.cube,self.wvt,1515,1576)
+            t1 = u.getBandArea(self.cube,self.wvt,1420,1463)
+            t2 = u.getBandArea(self.cube,self.wvt,1463,1515)
+            t3 = u.getBandArea(self.cube,self.wvt,1515,1576)
             b1 = t1*t2*t3
             b2 = self.BD1750()
             img = b1+b2
@@ -275,7 +345,7 @@ class paramCalculator:
         if check:
             img = (1115, 1260)
         elif not check:
-            img = u.getBandDepth(self.cube, self.wvt, 1115, 1260)
+            img = u.getBandDepth(self.cube, self.wvt, 1115, 1200, 1260)
         return img
     
     def BD1400(self, check = False):
@@ -296,7 +366,7 @@ class paramCalculator:
         if check:
             img = (1688, 1820)
         elif not check:
-            img = u.getBandDepth(self.cube, self.wvt, 1688, 1820)
+            img = u.getBandDepth(self.cube, self.wvt, 1688, 1750, 1820)
         return img
     
     def BD1900_2(self, check = False):
@@ -311,7 +381,7 @@ class paramCalculator:
             img = (1908, 2132)
         elif not check:
             # img = u.getBandArea(self.cube, self.wvt, 1800, 2000)
-            extract individual channels, replacing CRISM_NANs with IEEE_NaNs
+            # extract individual channels, replacing CRISM_NANs with IEEE_NaNs
             R1908 = u.getBand(self.cube,self.wvt,1908, kwidth = 1) 
             R1914 = u.getBand(self.cube,self.wvt,1914, kwidth = 1) 
             R1921 = u.getBand(self.cube,self.wvt,1921, kwidth = 1) 
@@ -375,7 +445,7 @@ class paramCalculator:
         if check:
             img = (2016, 2220)
         elif not check:
-            img = u.getBandDepth(self.cube, self.wvt, 2016, 2220)
+            img = u.getBandDepth(self.cube, self.wvt, 2016, 2100, 2220)
         return img
     
     def BD2165(self, check = False):
@@ -661,7 +731,7 @@ class paramCalculator:
     
     def BDI1000VIS(self, rp_r=None, check = False):
         if check:
-            img = (1340, 1535)
+            img = (833, 989)
         elif not check:
             if rp_r is None:
                 rp_l, rp_r = self.RPEAK1()
@@ -729,367 +799,51 @@ class paramCalculator:
         elif not check:
             img = u.getBandRatio(self.cube,self.wvt,2530,2210)
         return img
-
+    
     # -------------------------------------------------------------------------
-    # Browse Products
+    # Run Parameter calculations
     # -------------------------------------------------------------------------
-    def MAF(self,norm=False):
-        print('calculating MAF browse product')
-        tic = timeit.default_timer()
-        p1 = self.OLINDEX3()
-        p2 = self.LCPINDEX2()
-        p3 = self.HCPINDEX2()
-        if norm:
-            p1 = u.normalizeParameter(p1)
-            p2 = u.normalizeParameter(p2)
-            p3 = u.normalizeParameter(p3)
-        img = u.buildSummary(p1, p2, p3)
-        toc = timeit.default_timer()-tic
-        print(f'MAF finished in {round(toc,2)} seconds')
-        return img
-    def SUL(self,norm=False):
-        print('calculating SUL browse product')
-        tic = timeit.default_timer()
-        p1 = self.D460()
-        p2,p3 = self.ELMSUL()
-        if norm:
-            p1 = u.normalizeParameter(p1)
-            p2 = u.normalizeParameter(p2)
-            p3 = u.normalizeParameter(p3)
-        img = u.buildSummary(p1, p2, p3)
-        toc = timeit.default_timer()-tic
-        print(f'SUL finished in {round(toc,2)} seconds')
-        return img
-    def HEM(self,norm=False):
-        print('calculating HEM browse product')
-        tic = timeit.default_timer()
-        p1 = self.BD530_2()
-        p2 = self.BD670()
-        p3 = self.BD875()
-        if norm:
-            p1 = u.normalizeParameter(p1)
-            p2 = u.normalizeParameter(p2)
-            p3 = u.normalizeParameter(p3)
-        img = u.buildSummary(p1, p2, p3)
-        toc = timeit.default_timer()-tic
-        print(f'HEM finished in {round(toc,2)} seconds')
-        return img
-    def CPL(self,norm=False):
-        print('calculating CPL browse product')
-        tic = timeit.default_timer()
-        wvt = self.v_bands
-        p1 = u.getBandRatio(self.v, self.wvt, 680, 770)
-        p2 = self.D700()
-        p3 = u.getBandRatio(self.v, self.wvt, 470, 540)
-        if norm:
-            p1 = u.normalizeParameter(p1)
-            p2 = u.normalizeParameter(p2)
-            p3 = u.normalizeParameter(p3)
-        img = u.buildSummary(p1, p2, p3)
-        toc = timeit.default_timer()-tic
-        print(f'CPL finished in {round(toc,2)} seconds')
-        return img
-        
-    def FM2(self,norm=False):
-        print('calculating FM2 browse product')
-        tic = timeit.default_timer()
-        p1 = self.BD530_2()
-        p2 = self.BD920_2()
-        p3 = self.BDI1000VIS()
-        if norm:
-            p1 = u.normalizeParameter(p1)
-            p2 = u.normalizeParameter(p2)
-            p3 = u.normalizeParameter(p3)
-        img = u.buildSummary(p1, p2, p3)
-        toc = timeit.default_timer()-tic
-        print(f'FM2 finished in {round(toc/60,2)} minutes')
-        return img
-    def FAL(self,norm=True):
-        print('calculating FAL browse product')
-        tic = timeit.default_timer()
-        p1 = u.getBand(self.s,self.s_bands,2529)
-        p2 = u.getBand(self.s,self.s_bands,1506)
-        p3 = u.getBand(self.s,self.s_bands,1080)
-        if norm:
-            p1 = u.normalizeParameter(p1)
-            p2 = u.normalizeParameter(p2)
-            p3 = u.normalizeParameter(p3)
-        img = u.buildSummary(p1, p2, p3)
-        toc = timeit.default_timer()-tic
-        print(f'FAL finished in {round(toc,2)} seconds')
-        return img
-    def TRU(self,norm=True):
-        print('calculating TRU browse product')
-        tic = timeit.default_timer()
-        p1 = u.getBand(self.v,self.v_bands,637)
-        p2 = u.getBand(self.v,self.v_bands,550)
-        p3 = u.getBand(self.v,self.v_bands,463)
-        if norm:
-            p1 = u.normalizeParameter(p1)
-            p2 = u.normalizeParameter(p2)
-            p3 = u.normalizeParameter(p3)
-        img = u.buildSummary(p1, p2, p3)
-        toc = timeit.default_timer()-tic
-        print(f'TRU finished in {round(toc,2)} seconds')
-        return img
-    def PAL(self, norm=False): 
-        print('calculating PAL browse product')
-        tic = timeit.default_timer()
-        p1 = self.BD2210_2()
-        p2 = self.BD2190()
-        p3 = self.BD2165()
-        if norm:
-            p1 = u.normalizeParameter(p1)
-            p2 = u.normalizeParameter(p2)
-            p3 = u.normalizeParameter(p3)
-        img = u.buildSummary(p1, p2, p3)
-        toc = timeit.default_timer()-tic
-        print(f'PAL finished in {round(toc,2)} seconds')
-        return img   
-    def PHY(self, norm=False): 
-        print('calculating PHY browse product')
-        tic = timeit.default_timer()
-        p1 = self.D2200()
-        p2 = self.D2300()
-        p3 = self.BD1900r2()
-        if norm:
-            p1 = u.normalizeParameter(p1)
-            p2 = u.normalizeParameter(p2)
-            p3 = u.normalizeParameter(p3)
-        img = u.buildSummary(p1, p2, p3)
-        toc = timeit.default_timer()-tic
-        print(f'PHY finished in {round(toc,2)} seconds')
-        return img
-    def PFM(self, norm=False): 
-        print('calculating PFM browse product')
-        tic = timeit.default_timer()
-        p1 = self.BD2355()
-        p2 = self.D2300()
-        p3 = self.BD2290()
-        if norm:
-            p1 = u.normalizeParameter(p1)
-            p2 = u.normalizeParameter(p2)
-            p3 = u.normalizeParameter(p3)
-        img = u.buildSummary(p1, p2, p3)
-        toc = timeit.default_timer()-tic
-        print(f'PFM finished in {round(toc,2)} seconds')
-        return img
-    def CR2(self, norm=False): 
-        print('calculating CR2 browse product')
-        tic = timeit.default_timer()
-        p1 = self.MIN2295_2480()
-        p2 = self.MIN2345_2537()
-        p3 = self.BDCARB()
-        if norm:
-            p1 = u.normalizeParameter(p1)
-            p2 = u.normalizeParameter(p2)
-            p3 = u.normalizeParameter(p3)
-        img = u.buildSummary(p1, p2, p3)
-        toc = timeit.default_timer()-tic
-        print(f'CR2 finished in {round(toc,2)} seconds')
-        return img
-    def HYD(self, norm=False): 
-        print('calculating HYD browse product')
-        tic = timeit.default_timer()
-        p1 = self.SINDEX2()
-        p2 = self.BD2100_2()
-        p3 = self.BD1900_2()
-        if norm:
-            p1 = u.normalizeParameter(p1)
-            p2 = u.normalizeParameter(p2)
-            p3 = u.normalizeParameter(p3)
-        img = u.buildSummary(p1, p2, p3)
-        toc = timeit.default_timer()-tic
-        print(f'HYD finished in {round(toc,2)} seconds')
-        return img
-    def CHL(self, norm=False): 
-        print('calculating CHL browse product')
-        tic = timeit.default_timer()
-        p1 = self.ISLOPE()
-        p2 = self.BD1400()
-        p3 = self.IRR2()
-        if norm:
-            p1 = u.normalizeParameter(p1)
-            p2 = u.normalizeParameter(p2)
-            p3 = u.normalizeParameter(p3)
-        img = u.buildSummary(p1, p2, p3)
-        toc = timeit.default_timer()-tic
-        print(f'CHL finished in {round(toc,2)} seconds')
-        return img
-    def HYS(self, norm=False): 
-        print('calculating HYS browse product')
-        tic = timeit.default_timer()
-        p1 = self.MIN2250()
-        p2 = self.BD2250()
-        p3 = self.BD1900r2()
-        if norm:
-            p1 = u.normalizeParameter(p1)
-            p2 = u.normalizeParameter(p2)
-            p3 = u.normalizeParameter(p3)
-        img = u.buildSummary(p1, p2, p3)
-        toc = timeit.default_timer()-tic
-        print(f'HYS finished in {round(toc,2)} seconds')
-        return img
-    # -------------------------------------------------------------------------
-    # All Parameters 
-    # -------------------------------------------------------------------------
-    def calculateParams(self,paramList):
+    def calculateParams(self):
         tic = timeit.default_timer()
         # loop through paramList, add result to a tuple. keep track of valid parameters
-        paramDict = self.__dict__.copy()
-        p_tuple = tuple([paramDict[param](self) for param in paramList])
-        img = np.dstack(p_tuple)
+        paramDict = paramCalculator.__dict__.copy()
+        # p_tuple = tuple([paramDict[param](self) for param in self.validParams])
+        # p_tuple = tuple([paramDict[param](self)[1] if isinstance(paramDict[param](self), tuple) else paramDict[param](self) for param in self.validParams])
+        intermediate_list = []
+        for param in self.validParams:
+            if param == 'BDI1000VIS' and 'RPEAK1' in self.validParams:
+                intermediate_list.append(paramDict[param](self, rp_r=intermediate_list[self.validParams.index('RPEAK1')]))
+            elif isinstance(paramDict[param](self), tuple):
+                intermediate_list.append(paramDict[param](self)[1])
+            else:
+                intermediate_list.append(paramDict[param](self))
 
-    def calculateSwirParams(self):
-        if hasattr(self, 'j'):
-            self.s = self.j.copy()
-            self.s_bands = self.j_bands.copy()
-        # SWIR Params
-        tic = timeit.default_timer()
-        print('\rcalculating OLINDEX3')
-        p1=self.OLINDEX3()
-        p1 = np.where(self.s[:,:,100]==0.0,np.nan,p1)
-        print('\rcalculating LCPINDEX2')
-        p2=self.LCPINDEX2()
-        p2 = np.where(self.s[:,:,100]==0.0,np.nan,p2)
-        print('\rcalculating HCPINDEX2')
-        p3=self.HCPINDEX2()
-        p3 = np.where(self.s[:,:,100]==0.0,np.nan,p3)
-        print('\rcalculating BD1400')
-        p4=self.BD1400()
-        p4 = np.where(self.s[:,:,100]==0.0,np.nan,p4)
-        print('\rcalculating BD1450')
-        p5=self.BD1450()
-        p5 = np.where(self.s[:,:,100]==0.0,np.nan,p5)
-        print('\rcalculating BD1900_2')
-        p6=self.BD1900_2()
-        p6 = np.where(self.s[:,:,100]==0.0,np.nan,p6)
-        print('\rcalculating BD1900r2')
-        p7=self.BD1900r2()
-        p7 = np.where(self.s[:,:,100]==0.0,np.nan,p7)
-        print('\rcalculating BD2100_2')
-        p8=self.BD2100_2()
-        p8 = np.where(self.s[:,:,100]==0.0,np.nan,p8)
-        print('\rcalculating BD2165')
-        p9=self.BD2165()
-        p9 = np.where(self.s[:,:,100]==0.0,np.nan,p9)
-        print('\rcalculating BD2190')
-        p10=self.BD2190()
-        p10 = np.where(self.s[:,:,100]==0.0,np.nan,p10)
-        print('\rcalculating BD2210_2')
-        p11=self.BD2210_2()
-        p11 = np.where(self.s[:,:,100]==0.0,np.nan,p11)
-        print('\rcalculating BD2250')
-        p12 =self.BD2250()
-        p12 = np.where(self.s[:,:,100]==0.0,np.nan,p12)
-        print('\rcalculating BD2290')
-        p13=self.BD2290()
-        p13 = np.where(self.s[:,:,100]==0.0,np.nan,p13)
-        print('\rcalculating BD2355')
-        p14=self.BD2355() 
-        p14 = np.where(self.s[:,:,100]==0.0,np.nan,p14)
-        print('\rcalculating BDCARB')
-        p15=self.BDCARB()
-        p15 = np.where(self.s[:,:,100]==0.0,np.nan,p15)
-        print('\rcalculating D2200')
-        p16=self.D2200()
-        p16 = np.where(self.s[:,:,100]==0.0,np.nan,p16)
-        print('\rcalculating D2300')
-        p17=self.D2300()
-        p17 = np.where(self.s[:,:,100]==0.0,np.nan,p17)
-        print('\rcalculating IRR2')
-        p18=self.IRR2()
-        p18 = np.where(self.s[:,:,100]==0.0,np.nan,p18)
-        print('\rcalculating ISLOPE')
-        p19=self.ISLOPE()
-        p19 = np.where(self.s[:,:,100]==0.0,np.nan,p19)
-        print('\rcalculating MIN2250')
-        p20=self.MIN2250()
-        p20 = np.where(self.s[:,:,100]==0.0,np.nan,p20)
-        print('\rcalculating MIN2295_2480')
-        p21=self.MIN2295_2480()
-        p21 = np.where(self.s[:,:,100]==0.0,np.nan,p21)
-        print('\rcalculating MIN2345_2537')
-        p22 = self.MIN2345_2537()
-        p22 = np.where(self.s[:,:,100]==0.0,np.nan,p22)
-        print('\rcalculating R2529')
-        p23 = u.getBand(self.s,self.s_bands,2529)
-        p23 = np.where(self.s[:,:,100]==0.0,np.nan,p23)
-        print('\rcalculating R1506')
-        p24 = u.getBand(self.s,self.s_bands,1506)
-        p24 = np.where(self.s[:,:,100]==0.0,np.nan,p24)
-        print('\rcalculating R1080')
-        p25 = u.getBand(self.s,self.s_bands,1080)
-        p25 = np.where(self.s[:,:,100]==0.0,np.nan,p25)
-        print('\rcalculating SINDEX2')
-        p26=self.SINDEX2()
-        p26 = np.where(self.s[:,:,100]==0.0,np.nan,p26)
-        print('\rcalculating BD1200')
-        p27=self.BD1200()
-        p27 = np.where(self.s[:,:,100]==0.0,np.nan,p27)
-        print('\rcalculating BD2100_3')
-        p28 = self.BD2100_3()
-        print('\rcalculating GypTrip')
-        p29 = self.GypTrip()
-        print('\rcalculating ILL')
-        p30 = self.ILL()
-        print('\rSWIR parameters calculated!\r')
+        p_tuple = tuple(intermediate_list)
+
+
+        img = np.dstack(p_tuple)
         toc = timeit.default_timer()-tic
-        pTup = (p1,p2,p3,p4,p5,p6,p7,p8,p9,p10,p11,p12,p13,p14,p15,p16,p17,p18,p19,p20,p21,p22,p23,p24,p25,p26,p27,p28,p29,p30)
-        img = np.dstack(pTup)
         print(f'calculation took {round(toc/60,2)} minutes')
         return img
     
-    def calculateVisParams(self):
-        if hasattr(self, 'j'):
-            self.v = self.j.copy()
-            self.v_bands = self.j_bands.copy()
-        
-        # VNIR PARAMETERS
-        tic = timeit.default_timer()
-        print('\rcalculating R637')
-        p1 = u.getBand(self.v,self.v_bands,637)
-        p1 = np.where(self.v[:,:,100]==0.0,np.nan,p1)
-        print('\rcalculating R550')
-        p2 = u.getBand(self.v,self.v_bands,550)
-        p2 = np.where(self.v[:,:,100]==0.0,np.nan,p2)
-        print('\rcalculating R463')
-        p3 = u.getBand(self.v,self.v_bands,463)
-        p3 = np.where(self.v[:,:,100]==0.0,np.nan,p3)
-        print('\rcalculating SH460')
-        p4=self.SH460()
-        p4 = np.where(self.v[:,:,100]==0.0,np.nan,p4)
-        print('\rcalculating BD530_2')
-        p5=self.BD530_2()
-        p5 = np.where(self.v[:,:,100]==0.0,np.nan,p5)
-        print('\rcalculating BD670')
-        p6=self.BD670()
-        p6 = np.where(self.v[:,:,100]==0.0,np.nan,p6)
-        print('\rcalculating D700')
-        p7=self.D700()
-        p7 = np.where(self.v[:,:,100]==0.0,np.nan,p7)
-        print('\rcalculating BD875')
-        p8=self.BD875()
-        p8 = np.where(self.v[:,:,100]==0.0,np.nan,p8)
-        print('\rcalculating BD920_2')
-        p9=self.BD920_2()
-        p9 = np.where(self.v[:,:,100]==0.0,np.nan,p9)
-        print('\rcalculating RPEAK1')
-        p10,rp_r=self.RPEAK1()
-        p10 = np.where(self.v[:,:,100]==0.0,np.nan,p10)
-        print('\rcalculating BDI1000VIS')
-        p11=self.BDI1000VIS(rp_r=rp_r)
-        p11 = np.where(self.v[:,:,100]==0.0,np.nan,p11)
-        print('\rcalculating ELMSUL')
-        p12,p_=self.ELMSUL()
-        p12 = np.where(self.v[:,:,100]==0.0,np.nan,p12)
-        
-        toc = timeit.default_timer()-tic
-        pTup = (p1,p2,p3,p4,p5,p6,p7,p8,p9,p10,p11,p12)
-        img = np.dstack(pTup)
-        print('\rVis parameters calculated!\r')
-        print(f'calculation took {round(toc/60,2)} minutes')
-        return img
+    def calculateBrowse(self, params, savepath):
+        bf = pd.read_excel('browseDefinitions.xlsx')
+        # get valid browse products
+        # Filter the DataFrame of browse products based on valid parameters
+        filtered_bf = bf[bf['Param1'].isin(self.validParams) & bf['Param2'].isin(self.validParams) & bf['Param3'].isin(self.validParams)]
+        # Get the list of BrowseProducts where all three parameters appear
+        self.validBrowseProducts = filtered_bf['BrowseProduct'].tolist()
+        # calculate valid browse products
+        for bp in self.validBrowseProducts:
+            # Retrieve the parameters for the current browse product
+            parameters = bf.loc[bf['BrowseProduct'] == bp, ['Param1', 'Param2', 'Param3']].values[0]
+            i0 = self.validParams.index(parameters[0])
+            i1 = self.validParams.index(parameters[1])
+            i2 = self.validParams.index(parameters[2])
+            browseProduct = u.buildSummary(params[:,:,i0], params[:,:,i1], params[:,:,i2])
+            browseProduct = np.flip(u.browse2bit(u.stretchNBands(u.cropNZeros(browseProduct))),axis=2)
+            n = '/' + bp + '.png'
+            cv2.imwrite(savepath+n, browseProduct)
     # -------------------------------------------------------------------------
     # MNF Products
     # -------------------------------------------------------------------------
