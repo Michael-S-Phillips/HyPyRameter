@@ -11,6 +11,7 @@ The paramCalculator class could be edited in future versions to accomodate diffe
 
 @author: 
     Michael S. Phillips, JHU/APL
+    Christian Tai Udovicic, NAU
 
 """
 #%% import modules 
@@ -33,14 +34,15 @@ data_path = os.path.abspath(os.path.join('/Volumes/Arrakis/HySpex_Iceland/HyPyRa
 vhdr = data_path + '/iceland_vnir_drone_crop.hdr'
 shdr = data_path + '/iceland_swir_tripod_crop.hdr'
 jhdr = data_path + '/EMIT_L2A_RFL_001_20230329T145406_2308809_052_reflectance_cropped.hdr'
-file_name = vhdr.split('.')[0].split('/')[-1]
+file_name = jhdr.split('.')[0].split('/')[-1]
 
 # If you have a bad bands list, instantiate it here, it may be included in the header file of your image.
 # bbl = np.hstack((np.linspace(75,88,(88-75+1)),np.linspace(167,189,(189-167+1))))
 # bbl = [int(i) for i in bbl]
 
 # p is the paramCalculator object
-p = paramCalculator(data_path,file=vhdr)
+p = paramCalculator(data_path,file=jhdr)
+print(f'list of valid parameters:\n\t{p.validParams}')
 
 # interpolate through NaNs - this only works if the nan values are at consistent wavelengths across the whole cube
 # interp = interpNaNs(p.f, p.f_bands)
@@ -51,8 +53,7 @@ p = paramCalculator(data_path,file=vhdr)
 p.previewData()
 
 # optionally transpose the data for better display
-# p.v = np.transpose(p.v,axes=(1,0,2))
-# p.s = np.transpose(p.s,axes=(1,0,2))
+# p.f = np.transpose(p.f,axes=(1,0,2))
 
 # savepath is where to save your output parameter images
 savepath = data_path+'/parameters/'
@@ -87,110 +88,4 @@ except EnviException as error:
     else:
         pass
         
-
-
-#%% MNF block
-'''
-calculate minimum noise fraction transform images and save as PNG and ENVI .img
-'''
-# #SWIR
-# s_mnf10 = p.SWIR_MNF()
-# bs = [4,3,2] #because cv2 writes BGR for some reason
-# sName = '/SWIR_MNF_234.png'
-# cv2.imwrite(savepath+sName,s_mnf10[:,:,bs])
-# sName = '/SWIR_MNF_234_8bit.png'
-# cv2.imwrite(savepath+sName,u.browse2bit(s_mnf10[:,:,bs]))
-
-# bandList = ['1','2','3','4','5','6','7','8','9','10']
-# sMeta = p.s_.metadata.copy()
-# sMeta['wavelength'] = bandList
-# sMeta['wavelength units'] = 'MNF Band'
-# sMeta['default bands'] = ['1', '2', '3']
-# envi.save_image(savepath+'/SWIR_MNF.hdr', s_mnf10, metadata=sMeta,dtype=np.float32)
-
-
-# #Vis
-# v_mnf10 = p.VIS_MNF()
-# bs = [4,3,2]
-# vName = '/VNIR_MNF_234.png'
-# cv2.imwrite(savepath+vName,v_mnf10[:,:,bs])
-# vName = '/VNIR_MNF_234_8bit.png'
-# cv2.imwrite(savepath+vName,u.browse2bit(v_mnf10[:,:,bs]))
-
-# bandList = ['1','2','3','4','5','6','7','8','9','10']
-# vMeta = p.v_.metadata.copy()
-# vMeta['wavelength'] = bandList
-# vMeta['wavelength units'] = 'MNF Band'
-# vMeta['default bands'] = ['1', '2', '3']
-# envi.save_image(savepath+'/VIS_MNF.hdr', v_mnf10, metadata=vMeta,dtype=np.float32)
-
-#%% browse block
-'''
-generate one-off browse product images (as PNG files)
-'''
-savepath = data_path + '/BrowseProducts/'
-if os.path.isdir(savepath) is False:
-    os.mkdir(savepath)
-
-# calculate and save browse products as .png
-bp = p.MAF()
-n = 'MAF'+'.png'
-img = np.flip(u.browse2bit(u.stretchNBands(u.cropNZeros(bp))),axis=2)
-cv2.imwrite(savepath+n,img)
-del(img)
-
-bp = p.FM2()
-n = 'FM2'+'.png'
-img = np.flip(u.browse2bit(u.stretchNBands(u.cropNZeros(bp))),axis=2)
-cv2.imwrite(savepath+n,img)
-del(img)
-
-bp = p.FAL()
-n = 'FAL'+'.png'
-img = np.flip(u.browse2bit(u.stretchNBands(u.cropNZeros(bp))),axis=2)
-cv2.imwrite(savepath+n,img)
-del(img)
-
-bp = p.PAL()
-n = 'PAL'+'.png'
-img = np.flip(u.browse2bit(u.stretchNBands(u.cropNZeros(bp))),axis=2)
-cv2.imwrite(savepath+n,img)
-del(img)
-
-bp = p.PFM()
-n = 'PFM'+'.png'
-img = np.flip(u.browse2bit(u.stretchNBands(u.cropNZeros(bp))),axis=2)
-cv2.imwrite(savepath+n,img)
-del(img)
-
-bp = p.PHY()
-n = 'PHY'+'.png'
-img = np.flip(u.browse2bit(u.stretchNBands(u.cropNZeros(bp))),axis=2)
-cv2.imwrite(savepath+n,img)
-del(img)
-
-bp = p.CR2()
-n = 'CR2'+'.png'
-img = np.flip(u.browse2bit(u.stretchNBands(u.cropNZeros(bp))),axis=2)
-cv2.imwrite(savepath+n,img)
-del(img)
-
-bp = p.HYD()
-n = 'HYD'+'.png'
-img = np.flip(u.browse2bit(u.stretchNBands(u.cropNZeros(bp))),axis=2)
-cv2.imwrite(savepath+n,img)
-del(img)
-
-bp = p.CHL()
-n = 'CHL'+'.png'
-img = np.flip(u.browse2bit(u.stretchNBands(u.cropNZeros(bp))),axis=2)
-cv2.imwrite(savepath+n,img)
-del(img)
-
-bp = p.HYS()
-n = 'HYS'+'.png'
-img = np.flip(u.browse2bit(u.stretchNBands(u.cropNZeros(bp))),axis=2)
-cv2.imwrite(savepath+n,img)
-del(img)
-
-
+# %%

@@ -51,6 +51,52 @@ class iovf:
         if band_centers:
             self.band_centers = band_centers
 
+    def chunk_data(self):
+        # determine number of chunks
+        s = self.noise_cube.shape
+        if s[0] > s[1]:
+            principal_dim = 0
+        else:
+            principal_dim = 1
+
+        num_chunks = np.ceil(s[0]*s[1]*s[2]/2e6)
+        chunk_size = np.ceil(s[principal_dim]/num_chunks)
+        chunks = []
+        for chunk_x in range(num_chunks):
+            # Calculate the start and end indices for each chunk
+            start_x = int(chunk_x * chunk_size)
+            end_x = int(min(start_x + chunk_size, s[principal_dim]))
+            # Extract the chunk from the image array
+            if principal_dim == 0:
+                chunks.append(self.noise_cube[start_x:end_x, :, :])
+            elif principal_dim == 1:
+                chunks.append(self.noise_cube[:, start_x:end_x, :])
+
+        return chunks
+
+    def unchunk_data(self, chunks):
+        # determine number of chunks
+        s = self.noise_cube.shape
+        if s[0] > s[1]:
+            principal_dim = 0
+        else:
+            principal_dim = 1
+
+        num_chunks = np.ceil(s[0]*s[1]*s[2]/2e6)
+        chunk_size = np.ceil(s[principal_dim]/num_chunks)
+        unchunk = np.zeros_like(self.noise_cube)
+        for chunk_x in range(num_chunks):
+            # Calculate the start and end indices for each chunk
+            start_x = int(chunk_x * chunk_size)
+            end_x = int(min(start_x + chunk_size, s[principal_dim]))
+            # Put the chunk back into an image array
+            if principal_dim == 0:
+                unchunk[start_x:end_x, :, :] = chunks[chunk_x]
+            elif principal_dim == 1:
+                unchunk[:, start_x:end_x, :] = chunks[chunk_x]
+
+        return unchunk
+
     def get_surrounding_indeces(self,update_indeces,window=None):
         if window is None: 
             print('must specifiy a window size')
@@ -341,7 +387,7 @@ class iovf:
         print(f'\ntime to make reference cube \n\t{round(toc,2)} s')            
         return ref_cube, noise_cube
         
-    def iterative_outlier_filter(self,update_indeces=None,window=None):
+    def iterative_outlier_filter(self,update_indeces=None,window=None, chunk_image = False):
         if window is None: 
             print('must specifiy a window size')
             sys.exit(1)
@@ -349,32 +395,39 @@ class iovf:
         cpus = 6 #number of cpus to use in parallel process
         ws = window[0]*window[1]*window[2]
             
-        # update indeces if None when running the whole image cube (first iteration)
+        # update indeces is None when running the whole image cube (first iteration)
         if update_indeces is None:
             s = self.noise_cube.shape
             # vc = np.zeros(s,dtype=int)
             
-            # trying new stuff to parallelize
-            # get grubbs
-            print('\tgetting data chunks for grubbs test')
-            grubbs_chunks,windows,identifier = self.get_grubbs_chunks(self.noise_cube, window)
-            
-            # get voting blocks
-            print('\n\tpreparing data for parallel grubbs test')
-            grubbs_shape = np.asarray(grubbs_chunks).shape
-            args = [(grubbs_chunks[i],windows[i],identifier[i]) for i in tqdm(range(grubbs_shape[0]))]
-            
-            print('\n\trunning grubbs test')
-            
-            # run all in parallel *****************************
-            vbsi = run_vote_block(args,ws,cpus,parallel=True)
-            # **********************************************************
+            # chunk the image into groups of ~2e6 pixels
+            chunks = self.chunk_data()
+            vbsi_ = []
+            cn = 1
+            for chunk in chunks:
+                print(f'\n\tprocessing image chunk {cn}/{np.shape(chunks)[0]}')
+                # get grubbs
+                print('\n\tgetting data chunks for grubbs test')
+                grubbs_chunks,windows,identifier = self.get_grubbs_chunks(chunk, window)
+                
+                # get voting blocks
+                print('\n\tpreparing data for parallel grubbs test')
+                grubbs_shape = np.asarray(grubbs_chunks).shape
+                args = [(grubbs_chunks[i],windows[i],identifier[i]) for i in tqdm(range(grubbs_shape[0]))]
+                
+                print('\n\trunning grubbs test')
+                
+                # run all in parallel *****************************
+                vbsi_.append(run_vote_block(args,ws,cpus,parallel=True))
+                cn+=1
+                # **********************************************************
             
             # run all in serial *****************************
             # vbs = self.get_vote_block_serial(grubbs_chunks,windows)
             # **********************************************************
             
             # build vote cube
+            vbsi = [np.concatenate(sublist) for sublist in vbsi_]
             print('\tbuilding vote cube')
             vc = self.build_vote_cube(vbsi, s, window)
             
@@ -423,6 +476,7 @@ class iovf:
         v = True
         r = 1
         pixel_count = s[0]*s[1]*s[2]
+        if pixel_count > 1.5e6: chunk_image = True 
         
         if r < 2:
             vt = np.min(window)

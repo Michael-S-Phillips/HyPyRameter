@@ -16,22 +16,37 @@ import param_utils as u
 from spectral import calc_stats,noise_from_diffs,mnf
 from tqdm import tqdm
 import pandas as pd
+from iovf_generic import iovf
 
 
 class paramCalculator:
+    """this class handles an input hyperspectral image (an envi .img) and returns a spectral parameter image cube (as an envi .img)
+
+    Returns:
+        object: class object to calculate spectral parameters
+    """
     '''
     this class handles an input hyperspectral image (an envi .img) and returns 
     browse product summary images
     
     I/O
-    vfile: /path/to/vis.hdr
-        this is a .hdr file, not the .img
-    sfile: /path/to/swir.hdr
+    file: /path/to/image.hdr
         this is a .hdr file, not the .img
         
     '''
     
     def __init__(self, outdir, file=None, crop=None, bbl=[None], flip = False, transpose = False, denoise=False):
+        """initiation of paramCalculator class
+
+        Args:
+            outdir (str): path to output directory
+            file (str, optional): path to header file for the input envi image. Defaults to None.
+            crop (list, optional): list with starting and ending row and column values for crop region, like [r0, r1, c0, c1]. Defaults to None.
+            bbl (list, optional): bad bands list, integer index values. Defaults to [None].
+            flip (bool, optional): option to flip the image. Defaults to False.
+            transpose (bool, optional): option to transpose rows, columns and bands. Defaults to False.
+            denoise (bool, optional): option to denoise the image. Defaults to False.
+        """
         tic = timeit.default_timer()
         self.file = file
 
@@ -70,7 +85,7 @@ class paramCalculator:
 
         if denoise:
             print('denoising cube')
-            self.denoiser(1)
+            self.denoiser()
 
         self.cube = self.f
         self.wvt = self.f_bands
@@ -83,7 +98,11 @@ class paramCalculator:
     # -------------------------------------------------------------------------
     # utilities
     # -------------------------------------------------------------------------
-        
+    def denoiser(self):
+        dn = iovf(self.f, '')
+        dn.run()
+        self.f = dn.flt
+
     def previewData(self):
         # preview data
         plt.title('Image Preview')
@@ -103,20 +122,21 @@ class paramCalculator:
         b_max = np.max(self.f_bands)
 
         # get wavelength bounds for each parameter...
-        paramList = ['R463', 'R550', 'R637', 'R1080', 'R1506', 'R2529', 'HCPINDEX2', 'LCPINDEX2', 'OLINDEX3', 'SINDEX2', 'GINDEX', 'BD530_2', 'BD670', 'BD875', 'BD920_2', 'BD1200', 'BD1400', 'BD1450', 'BD1750', 'BD1900_2', 'BD1900r2', 'BD2100_2', 'BD2100_3', 'BD2165', 'BD2190', 'BD2210_2', 'BD2250', 'BD2290', 'BD2355', 'BDCARB', 'D460', 'D700', 'D2200', 'D2300', 'MIN2295_2480', 'MIN2250', 'MIN2345_2537', 'RPEAK1', 'BDI1000VIS', 'ISLOPE', 'IRR2']
         paramDict = paramCalculator.__dict__.copy()
+        paramList = list(paramDict)[6:-4]
         w_bounds = [paramDict[param](self,check=True) for param in paramList]
 
         # check against parameter values
         validParams = []
         for bounds, param in zip(w_bounds,paramList):
-            # determine if min bound is valid
-            if bounds[0] > b_min:
+            # determine if min bound is valid within a tolerance level
+            tol = 5
+            if bounds[0] > (b_min-tol):
                 min_valid = True
             else:
                 min_valid = False
             # determine if max bound is valid
-            if bounds[1] < b_max:
+            if bounds[1] < (b_max + tol):
                 max_valid = True
             else:
                 max_valid = False
@@ -526,7 +546,31 @@ class paramCalculator:
             nmin = np.nanmin(np.where(img>-np.inf,img,np.nan))
             img = np.where(img>-np.inf,img,nmin)
         return img
+# -----------------------------------------------------------------------------------------------
+# Band Area (BA) parameters
+    def BA1200(self, check = False):
+        if check:
+            img = (1115, 1260)
+        elif not check:
+            img = u.getBandArea(self.cube, self.wvt, 1115, 1260)
+        return img
     
+    def BA1450(self, check = False):
+        if check:
+            img = (1340, 1535)
+        elif not check:
+            img = u.getBandArea(self.cube, self.wvt, 1340, 1535)
+        return img
+    
+    def BA1900(self, check = False):
+        if check:
+            img = (1850, 2067)
+        elif not check:
+            img = u.getBandArea(self.cube, self.wvt, 1850, 2067)
+        return img
+    
+# -----------------------------------------------------------------------------------------------
+# Depth (D) parameters
     def D460(self, check = False):
         if check:
             img = (420, 520)
@@ -534,8 +578,6 @@ class paramCalculator:
             img = u.getBandDepthInvert(self.cube, self.wvt, 420, 460, 520)
         return img
     
-# -----------------------------------------------------------------------------------------------
-# Depth (D) parameters
     def D700(self, check = False):
         if check:
             img = (630, 830)
@@ -826,7 +868,7 @@ class paramCalculator:
         print(f'calculation took {round(toc/60,2)} minutes')
         return img
     
-    def calculateBrowse(self, params, savepath):
+    def calculateBrowse(self, params, savepath, stype = 'linear', perc = 2, factor = 2.5):
         bf = pd.read_excel('browseDefinitions.xlsx')
         # get valid browse products
         # Filter the DataFrame of browse products based on valid parameters
@@ -841,64 +883,9 @@ class paramCalculator:
             i1 = self.validParams.index(parameters[1])
             i2 = self.validParams.index(parameters[2])
             browseProduct = u.buildSummary(params[:,:,i0], params[:,:,i1], params[:,:,i2])
-            browseProduct = np.flip(u.browse2bit(u.stretchNBands(u.cropNZeros(browseProduct))),axis=2)
+            browseProduct = np.flip(u.browse2bit(u.stretchNBands(u.cropNZeros(browseProduct),stype=stype, perc=perc, factor=factor)),axis=2)
             n = '/' + bp + '.png'
             cv2.imwrite(savepath+n, browseProduct)
-    # -------------------------------------------------------------------------
-    # MNF Products
-    # -------------------------------------------------------------------------
-    def SWIR_MNF(self,mask=False):
-        
-        tic = timeit.default_timer()
-        print('processing SWIR MNF')
-        print('calculating signal')
-        if mask:
-            # these values (0.0 and 2.0) are specific NaN values for HySpex data
-            # you can change this to mask NaN values in your data
-            mask0 = np.where(self.s==0.0,0,1)
-            mask2 = np.where(self.s==2.0,0,1)
-            mask = mask0*mask2
-            s_signal = calc_stats(self.s,mask=mask)
-        else:
-            s_signal = calc_stats(self.s)
-        print('calculating noise')
-        rowCenter = int(np.ceil(np.shape(self.s)[0]/2))
-        colCenter = int(np.ceil(np.shape(self.s)[1]/2))
-        s_noise = noise_from_diffs(self.s[(rowCenter-100):rowCenter+100,(colCenter-100):(colCenter+100),:])
-        print('calculating mnf')
-        s_mnfr = mnf(s_signal, s_noise)
-        print('reducing mnf')
-        s_mnf10 = s_mnfr.reduce(self.s, num=10)
-        toc = timeit.default_timer()-tic
-        print('done!')
-        print(f'{round(toc/60,2)} minutes to calculate SWIR MNF')
-        return s_mnf10
-    
-    def VIS_MNF(self,mask=False):
-        tic = timeit.default_timer()
-        print('processing VIS MNF')
-        print('calculating signal')
-        if mask:
-            mask0 = np.where(self.v==0.0,0,1)
-            mask2 = np.where(self.s==2.0,0,1)
-            mask = mask0*mask2
-            v_signal = calc_stats(self.v,mask=mask)
-        else:
-            v_signal = calc_stats(self.v)
-            
-        print('calculating noise')
-        rowCenter = int(np.ceil(np.shape(self.v)[0]/2))
-        colCenter = int(np.ceil(np.shape(self.v)[1]/2))
-        v_noise = noise_from_diffs(self.v[(rowCenter-100):rowCenter+100,(colCenter-100):(colCenter+100),:])
-        print('calculating mnf')
-        v_mnfr = mnf(v_signal, v_noise)
-        print('reducing mnf')
-        v_mnf10 = v_mnfr.reduce(self.v, num=10)
-        toc = timeit.default_timer()-tic
-        print('done!')
-        print(f'{round(toc/60,2)} minutes to calculate VIS MNF')
-        return v_mnf10
-    
     
     
     
