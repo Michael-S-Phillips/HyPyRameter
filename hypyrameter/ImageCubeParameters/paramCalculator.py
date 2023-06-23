@@ -17,6 +17,7 @@ from spectral import calc_stats,noise_from_diffs,mnf
 from tqdm import tqdm
 import pandas as pd
 from iovf_generic import iovf
+from spectral.io.envi import EnviException as EnviException
 
 
 class paramCalculator:
@@ -51,7 +52,7 @@ class paramCalculator:
         self.file = file
 
         if file is not None:
-            print(f'loading {file}]using spectral')
+            print(f'loading {file} using spectral')
             self.f_ = envi.open(file) 
         else:
             print('must provide a file to load')
@@ -123,7 +124,7 @@ class paramCalculator:
 
         # get wavelength bounds for each parameter...
         paramDict = paramCalculator.__dict__.copy()
-        paramList = list(paramDict)[6:-4]
+        paramList = list(paramDict)[6:-5]
         w_bounds = [paramDict[param](self,check=True) for param in paramList]
 
         # check against parameter values
@@ -887,7 +888,19 @@ class paramCalculator:
             n = '/' + bp + '.png'
             cv2.imwrite(savepath+n, browseProduct)
     
-    
+    def saveParamCube(params, params_file_name, meta):
+        try:
+            envi.save_image(params_file_name, params,
+                            metadata=meta, dtype=np.float32)
+        except EnviException as error:
+            print(error)
+            choice = input('file exists, would you like to overwite?\n\ty or n\n')
+            choice = choice.lower()
+            if choice == 'y':
+                envi.save_image(params_file_name, params,
+                                metadata=meta, dtype=np.float32, force=True)
+            else:
+                pass
     
     
     

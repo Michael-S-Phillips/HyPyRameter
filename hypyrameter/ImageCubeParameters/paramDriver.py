@@ -41,7 +41,7 @@ file_name = jhdr.split('.')[0].split('/')[-1]
 # bbl = [int(i) for i in bbl]
 
 # p is the paramCalculator object
-p = paramCalculator(data_path,file=jhdr)
+p = paramCalculator(data_path,file=jhdr, denoise=True)
 print(f'list of valid parameters:\n\t{p.validParams}')
 
 # interpolate through NaNs - this only works if the nan values are at consistent wavelengths across the whole cube
@@ -74,18 +74,6 @@ print(f'calculating valid parameters\n{p.validParams}')
 params = p.calculateParams()
 print('calculating valid browse products')
 browseProducts = p.calculateBrowse(params,savepath)
-
-try:
-    envi.save_image(params_file_name, params,
-                    metadata=meta, dtype=np.float32)
-except EnviException as error:
-    print(error)
-    choice = input('file exists, would you like to overwite?\n\ty or n\n')
-    choice = choice.lower()
-    if choice == 'y':
-        envi.save_image(params_file_name, params,
-                        metadata=meta, dtype=np.float32, force=True)
-    else:
-        pass
+p.saveParamCube(params, params_file_name, meta)
         
 # %%

@@ -59,8 +59,8 @@ class iovf:
         else:
             principal_dim = 1
 
-        num_chunks = np.ceil(s[0]*s[1]*s[2]/2e6)
-        chunk_size = np.ceil(s[principal_dim]/num_chunks)
+        num_chunks = int(np.ceil(s[0]*s[1]*s[2]/2e6))
+        chunk_size = int(np.ceil(s[principal_dim]/num_chunks))
         chunks = []
         for chunk_x in range(num_chunks):
             # Calculate the start and end indices for each chunk
@@ -82,8 +82,8 @@ class iovf:
         else:
             principal_dim = 1
 
-        num_chunks = np.ceil(s[0]*s[1]*s[2]/2e6)
-        chunk_size = np.ceil(s[principal_dim]/num_chunks)
+        num_chunks = int(np.ceil(s[0]*s[1]*s[2]/2e6))
+        chunk_size = int(np.ceil(s[principal_dim]/num_chunks))
         unchunk = np.zeros_like(self.noise_cube)
         for chunk_x in range(num_chunks):
             # Calculate the start and end indices for each chunk
@@ -402,10 +402,12 @@ class iovf:
             
             # chunk the image into groups of ~2e6 pixels
             chunks = self.chunk_data()
+            cs = len(chunks)
+            print(f'data successfully chunked into {cs} chunks')
             vbsi_ = []
             cn = 1
             for chunk in chunks:
-                print(f'\n\tprocessing image chunk {cn}/{np.shape(chunks)[0]}')
+                print(f'\n\tprocessing image chunk {cn}/{cs}')
                 # get grubbs
                 print('\n\tgetting data chunks for grubbs test')
                 grubbs_chunks,windows,identifier = self.get_grubbs_chunks(chunk, window)
@@ -422,14 +424,17 @@ class iovf:
                 cn+=1
                 # **********************************************************
             
+            # build vote cube
+            vc_ = []
+            print('\tbuilding vote cube')
+            for vbsi, chunk in zip(vbsi_, chunks):
+                s_ = chunk.shape
+                vc_.append(self.build_vote_cube(vbsi, s_, window))
+            vc = self.unchunk_data(vc_)
+
             # run all in serial *****************************
             # vbs = self.get_vote_block_serial(grubbs_chunks,windows)
             # **********************************************************
-            
-            # build vote cube
-            vbsi = [np.concatenate(sublist) for sublist in vbsi_]
-            print('\tbuilding vote cube')
-            vc = self.build_vote_cube(vbsi, s, window)
             
         else:
             clear_output(wait=True)
