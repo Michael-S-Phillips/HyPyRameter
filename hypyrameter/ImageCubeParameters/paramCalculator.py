@@ -7,17 +7,20 @@ Created on Sun Jul 10 13:33:42 2022
 """
 import numpy as np
 import timeit
-import os
 import cv2
 from matplotlib import pyplot as plt 
 import spectral.io.envi as envi
 import multiprocessing as mp
-import param_utils as u
 from spectral import calc_stats,noise_from_diffs,mnf
 from tqdm import tqdm
 import pandas as pd
-from iovf_generic import iovf
 from spectral.io.envi import EnviException as EnviException
+import tkinter as tk
+from tkinter import filedialog
+import os
+
+from hypyrameter.ImageCubeParameters import param_utils as u
+from hypyrameter.ImageCubeParameters import iovf_generic as iovf
 
 
 class paramCalculator:
@@ -36,38 +39,62 @@ class paramCalculator:
         
     '''
     
-    def __init__(self, outdir, file=None, crop=None, bbl=[None], flip = False, transpose = False, denoise=False):
+    def __init__(self, crop=None, bbl=[None], flip = False, transpose = False, denoise=False):
         """initiation of paramCalculator class
 
         Args:
-            outdir (str): path to output directory
-            file (str, optional): path to header file for the input envi image. Defaults to None.
             crop (list, optional): list with starting and ending row and column values for crop region, like [r0, r1, c0, c1]. Defaults to None.
             bbl (list, optional): bad bands list, integer index values. Defaults to [None].
             flip (bool, optional): option to flip the image. Defaults to False.
             transpose (bool, optional): option to transpose rows, columns and bands. Defaults to False.
             denoise (bool, optional): option to denoise the image. Defaults to False.
         """
+        
         tic = timeit.default_timer()
-        self.file = file
+        # Create a tkinter root window (it won't be shown)
+        root = tk.Tk()
+        root.withdraw()  # Hide the root window
 
-        if file is not None:
-            print(f'loading {file} using spectral')
-            self.f_ = envi.open(file) 
+        # Use the file dialog to select a '.hdr' file
+        print("Select input hyperspectral cube")
+        self.file = filedialog.askopenfilename(filetypes=[("Select input hyperspectral cube", "*.hdr")])
+
+        # Check if the user selected a file
+        if hasattr(self, 'file'):
+            # Check the file extension
+            _, file_extension = os.path.splitext(self.file)
+            if file_extension.lower() == ".hdr":
+                print("Selected file:", self.file)
+            else:
+                print("Please select a '.hdr' file.")
         else:
-            print('must provide a file to load')
+            print("No file selected")
+            pass
 
-        self.outdir = outdir
-        print('\tobjects loaded\nloading data')
+        print(f'loading {self.file} using spectral')
+        self.f_ = envi.open(self.file)
+        print('\tobjects loaded\n')
+        
+        # Use the directory dialog to select an output directory
+        print("Select output directory")
+        self.outdir = filedialog.askdirectory()
+
+        # Check if the user selected a directory
+        if hasattr(self, 'outdir'):
+            print("Selected output directory:", self.outdir)
+        else:
+            print("No output directory selected")
         
         # load wave tables and data
         self.f_bands = [float(b) for b in self.f_.metadata['wavelength']]
+
         if 'default bands' in self.f_.metadata:
             self.f_preview_bands = [int(float(b)) for b in self.f_.metadata['default bands']]
         else:  
             self.f_preview_bands = [39, 23, 4] #if no default bands are set, grab reasonable bands for preview
 
         # loading data
+        print('loading data')
         self.f = np.array(self.f_.load())
         # flip and transpose as necessary
         if flip:
@@ -95,6 +122,7 @@ class paramCalculator:
         
         toc = timeit.default_timer()-tic
         print(f'{np.round(toc/60,2)} minutes to load data')
+        self.previewData()
 
     # -------------------------------------------------------------------------
     # utilities
@@ -123,8 +151,10 @@ class paramCalculator:
         b_max = np.max(self.f_bands)
 
         # get wavelength bounds for each parameter...
+        '''We need a better way to only grab the parameters that are valid for the data cube'''
         paramDict = paramCalculator.__dict__.copy()
-        paramList = list(paramDict)[6:-5]
+        paramList = list(paramDict)[6:-6]
+        print(f'valid parameters:\n\t{paramList}')
         w_bounds = [paramDict[param](self,check=True) for param in paramList]
 
         # check against parameter values
@@ -547,6 +577,7 @@ class paramCalculator:
             nmin = np.nanmin(np.where(img>-np.inf,img,np.nan))
             img = np.where(img>-np.inf,img,nmin)
         return img
+    
 # -----------------------------------------------------------------------------------------------
 # Band Area (BA) parameters
     def BA1200(self, check = False):
@@ -863,19 +894,19 @@ class paramCalculator:
 
         p_tuple = tuple(intermediate_list)
 
-
         img = np.dstack(p_tuple)
         toc = timeit.default_timer()-tic
         print(f'calculation took {round(toc/60,2)} minutes')
         return img
     
-    def calculateBrowse(self, params, savepath, stype = 'linear', perc = 2, factor = 2.5):
-        bf = pd.read_excel('browseDefinitions.xlsx')
+    def calculateBrowse(self, stype = 'linear', perc = 2, factor = 2.5):
+        bf = pd.read_excel('hypyrameter/ImageCubeParameters/browseDefinitions.xlsx')
         # get valid browse products
         # Filter the DataFrame of browse products based on valid parameters
         filtered_bf = bf[bf['Param1'].isin(self.validParams) & bf['Param2'].isin(self.validParams) & bf['Param3'].isin(self.validParams)]
         # Get the list of BrowseProducts where all three parameters appear
         self.validBrowseProducts = filtered_bf['BrowseProduct'].tolist()
+        print(f'valid browse products:\n{self.validBrowseProducts}')
         # calculate valid browse products
         for bp in self.validBrowseProducts:
             # Retrieve the parameters for the current browse product
@@ -883,24 +914,38 @@ class paramCalculator:
             i0 = self.validParams.index(parameters[0])
             i1 = self.validParams.index(parameters[1])
             i2 = self.validParams.index(parameters[2])
-            browseProduct = u.buildSummary(params[:,:,i0], params[:,:,i1], params[:,:,i2])
+            browseProduct = u.buildSummary(self.params[:,:,i0], self.params[:,:,i1], self.params[:,:,i2])
             browseProduct = np.flip(u.browse2bit(u.stretchNBands(u.cropNZeros(browseProduct),stype=stype, perc=perc, factor=factor)),axis=2)
             n = '/' + bp + '.png'
-            cv2.imwrite(savepath+n, browseProduct)
+            cv2.imwrite(self.outdir+n, browseProduct)
     
-    def saveParamCube(params, params_file_name, meta):
+    def saveParamCube(self):
+        file_name = self.file.split('/')[-1].split('.')[0]
+        params_file_name = self.outdir+'/'+file_name+'_params.hdr'
+        meta = self.f_.metadata.copy()
+        meta['wavelength'] = self.validParams
+        meta['band names'] = self.validParams
+        meta['wavelength units'] = 'parameters'
+        meta['default bands'] = ['R637', 'R550', 'R463']
         try:
-            envi.save_image(params_file_name, params,
+            envi.save_image(params_file_name, self.params,
                             metadata=meta, dtype=np.float32)
         except EnviException as error:
             print(error)
             choice = input('file exists, would you like to overwite?\n\ty or n\n')
             choice = choice.lower()
             if choice == 'y':
-                envi.save_image(params_file_name, params,
+                envi.save_image(params_file_name, self.params,
                                 metadata=meta, dtype=np.float32, force=True)
             else:
                 pass
     
+    def run(self):
+        print(f'calculating valid parameters\n{self.validParams}')
+        self.params = self.calculateParams()
+        self.saveParamCube()
+        print(f'calculating valid browse products\n')
+        self.browseProducts = self.calculateBrowse()
+        
     
     
