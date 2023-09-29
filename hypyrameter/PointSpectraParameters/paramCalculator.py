@@ -22,7 +22,7 @@ class oreXpressParamCalculator:
         
     '''
     
-    def __init__(self, wvt,spectrum):
+    def __init__(self, wvt, spectrum):
         self.wvt = wvt
         self.spectrum = spectrum
         
