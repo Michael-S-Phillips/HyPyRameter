@@ -18,7 +18,7 @@ Install the required packages using conda
 ```bash
 conda env create -f environment.yml
 ```
-This will create a conda environment called 'hypyrameter'
+This will create a conda environment called 'hypyrameter'. 
 Activate the environment:
 ```bash
 conda activate hypyrameter

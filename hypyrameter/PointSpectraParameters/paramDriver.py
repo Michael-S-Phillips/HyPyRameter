@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 from paramCalculator import oreXpressParamCalculator
 from readSed import *
-from readLibrary import *
+from hypyrameter.PointSpectraParameters.readUSGS import *
 
 date_ = '220714'
 sol_ = 'Sol106'
