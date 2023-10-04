@@ -26,7 +26,14 @@ conda activate hypyrameter
 
 ## Usage
 ### Image Cube Parameters
-See the ImageCubeParamsExample.ipynb file for how to run the Image Cube Parameters calculation.
+```python
+#Import the module
+from hypyrameter.ImageCubeParameters.paramCalculator import paramCalculator
+# Instantiate the class and select your input image and output directory
+pc = paramCalculator()
+# Run the calculator and save the results
+pc.run()
+```
 
 ### Point Spectra Parameters
 See the PointSpectraParameters.ipynb file for how to run the Point Spectra Parameters calculation.

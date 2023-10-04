@@ -80,15 +80,16 @@ class oreXpressParamCalculator:
             spectrum = self.spectrum
             wvt = self.wvt
             # extract data from image spectrum
-            R2120 = u.getRvalue(spectrum, wvt,2120)
-            R2140 = u.getRvalue(spectrum, wvt,2140)
-            R2230 = u.getRvalue(spectrum, wvt,2230)
-            R2250 = u.getRvalue(spectrum, wvt,2250)
-            R2430 = u.getRvalue(spectrum, wvt,2430)
-            R2460 = u.getRvalue(spectrum, wvt,2460)
-            R2530 = u.getRvalue(spectrum, wvt,2530)
-            R1690 = u.getRvalue(spectrum, wvt,1690)
+            R1690 = u.getRvalue(spectrum, wvt,1690, kwidth=7)
+            R2120 = u.getRvalue(spectrum, wvt,2120, kwidth=5)
+            R2140 = u.getRvalue(spectrum, wvt,2140, kwidth=7)
+            R2230 = u.getRvalue(spectrum, wvt,2230, kwidth=7)
+            R2250 = u.getRvalue(spectrum, wvt,2250, kwidth=7)
+            R2430 = u.getRvalue(spectrum, wvt,2430, kwidth=7)
+            R2460 = u.getRvalue(spectrum, wvt,2460, kwidth=7)
+            R2530 = u.getRvalue(spectrum, wvt,2530, kwidth=7)
         
+            W1690 = u.getClosestWavelength(1690,wvt)
             W2120 = u.getClosestWavelength(2120,wvt)
             W2140 = u.getClosestWavelength(2140,wvt)
             W2230 = u.getClosestWavelength(2230,wvt)
@@ -96,7 +97,6 @@ class oreXpressParamCalculator:
             W2430 = u.getClosestWavelength(2430,wvt)
             W2460 = u.getClosestWavelength(2460,wvt)
             W2530 = u.getClosestWavelength(2530,wvt)
-            W1690 = u.getClosestWavelength(1690,wvt)
         
         
             # compute the corrected reflectance interpolating 
@@ -225,9 +225,7 @@ class oreXpressParamCalculator:
         if check:
             paramValue = (440, 614)
         elif not check:
-            spectrum = self.spectrum
-            wvt = self.wvt
-            paramValue = u.getRvalueDepth(spectrum,wvt,440,530,614)
+            paramValue = u.getRvalueDepth(self.spectrum, self.wvt, 440, 530, 614, lw=3, mw=3, hw=3)
         return paramValue
     
     def BD670(self, check = False):

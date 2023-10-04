@@ -18,7 +18,13 @@ def getRvalue(spectrum,wvt,wl,kwidth = 5):
         r = spectrum.iloc[bindex]
     else:
         w = (kwidth-1)/2
-        r = np.median(spectrum.iloc[int(bindex-w):int(bindex+w)])
+        min_index = bindex-w
+        max_index = bindex+w
+        if bindex-w < 0:
+            min_index = 0
+        if bindex + w > len(spectrum) -1:
+            max_index = len(spectrum)-1
+        r = np.median(spectrum.iloc[int(min_index):int(max_index)])
     return r
 
 def getClosestWavelength(wl,wvt):
@@ -36,9 +42,9 @@ def getClosestWavelength(wl,wvt):
 
 def getRvalueDepth(spectrum, wvt,low,mid,hi,lw=5,mw=5,hw=5):
     # retrieve bands from spectrum
-    Rlow = getRvalue(spectrum,wvt,low,kwidth=lw)
-    Rmid = getRvalue(spectrum, wvt,mid,kwidth=mw)
-    Rhi  = getRvalue(spectrum,wvt,hi,kwidth=hw)
+    Rlow = getRvalue(spectrum, wvt, low, kwidth=lw)
+    Rmid = getRvalue(spectrum, wvt, mid, kwidth=mw)
+    Rhi  = getRvalue(spectrum, wvt, hi, kwidth=hw)
     
     # determine wavelengths for low, mid, hi
     WL = getClosestWavelength(low,wvt)

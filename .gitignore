@@ -91,3 +91,5 @@ target/
 
 # Manuscript Prep
 figure_preparation.ipynb
+CRISM_type_spectra.ipynb
+hypyrameter/PointSpectraParameters/CRISM_MICA_parameters/
