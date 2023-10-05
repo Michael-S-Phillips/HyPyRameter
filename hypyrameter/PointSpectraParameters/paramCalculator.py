@@ -233,7 +233,7 @@ class oreXpressParamCalculator:
             paramValue = (620, 745)
         elif not check:
             # this is a custom parameter
-            paramValue = u.getRvalueDepth(self.spectrum, self.wvt, 620, 670, 745)
+            paramValue = u.getRvalueDepth(self.spectrum, self.wvt, 620, 670, 745, lw=3, mw=3, hw=3)
         return paramValue
     
     def D700(self, check = False):
@@ -283,6 +283,15 @@ class oreXpressParamCalculator:
             # this is a custom parameter
             paramValue = u.getRvalueDepth(self.spectrum, self.wvt, 747, 875, 980)
         return paramValue
+        
+    def BD905(self, check = False):
+        if check:
+            paramValue = (750, 1300)
+        elif not check:
+            spectrum = self.spectrum
+            wvt = self.wvt
+            paramValue = u.getRvalueDepth(spectrum,wvt,750,905,1300)
+        return paramValue  
     
     def BD920_2(self, check = False):
         if check:
@@ -292,7 +301,7 @@ class oreXpressParamCalculator:
             wvt = self.wvt
             paramValue = u.getRvalueDepth(spectrum,wvt,807,920,1200)
         return paramValue   
-    
+
     def BD1200(self, check = False):
         if check:
             paramValue = (1115, 1260)
@@ -666,9 +675,10 @@ class oreXpressParamCalculator:
             coefs = np.polyfit(rp_w,rp_[:],5)
             poly = np.poly1d(coefs)
             y_ = list(poly(x_))
-            rp_l = x_[y_.index(np.max(y_))]/1000
+            rp_l = x_[y_.index(np.max(y_))]/1000 #wavelength value of peak reflectance
             rp_r = np.max(y_)
-            return rp_l,rp_r
+            self.rpeak_reflectance = rp_r
+            return rp_l
    
     def BDI1000VIS(self,rp_r=False, check = False):
         if check:
@@ -677,7 +687,8 @@ class oreXpressParamCalculator:
             spectrum = self.spectrum
             wvt = list(self.wvt)
             if rp_r is False:
-                rp_l, rp_r = self.RPEAK1()
+                rp_l = self.RPEAK1()
+                rp_r = self.rpeak_reflectance
             # multispectral version
             # bdi_wv = [833,860,892,925,951,984,1023] 
             # vi = [wvt.index(u.getClosestWavelength(i,wvt)) for i in bdi_wv]
@@ -696,8 +707,8 @@ class oreXpressParamCalculator:
             coefs = np.polyfit(wv_um,bdi_norm,3)
             poly = np.poly1d(coefs)
             pint = np.poly1d(poly.integ())
-            bdi1000vis_value = pint(wv_um[-1])-pint(wv_um[0])#it.(wv_um,1.0-spec_vec)
-            return bdi1000vis_value
+            paramValue = pint(wv_um[-1])-pint(wv_um[0])#it.(wv_um,1.0-spec_vec)
+            return paramValue
    
     def IRR2(self, check = False):
         if check:
@@ -722,9 +733,9 @@ class oreXpressParamCalculator:
             for param in self.validParams:
                 if param == 'BDI1000VIS' and 'RPEAK1' in self.validParams:
                     # avoid calculating RPEAK1 values twice
-                    parameter_array[i,j] = param_dict[param](self, rp_r=parameter_array[self.validParams.index('RPEAK1'),j])
+                    parameter_array[i,j] = param_dict[param](self, rp_r=self.rpeak_reflectance)
                 elif isinstance(param_dict[param](self), tuple):
-                    parameter_array[i,j] = param_dict[param](self)[1]
+                    parameter_array[i,j] = param_dict[param](self)[0]
                 else:
                     parameter_array[i,j] = param_dict[param](self)
                 i += 1

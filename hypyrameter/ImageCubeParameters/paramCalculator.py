@@ -385,6 +385,13 @@ class paramCalculator:
             img = u.getBandDepth(self.cube, self.wvt, 747, 875, 980)
         return img
     
+    def BD905(self, check = False):
+        if check:
+            img = (750, 1300)
+        elif not check:
+            img = u.getBandDepth(self.cube,self.wvt,750,905,1300)
+        return img
+    
     def BD920_2(self, check = False):
         if check:
             img = (807, 984)
@@ -525,6 +532,13 @@ class paramCalculator:
             img = (2120, 2340)
         elif not check:
             img = u.getBandDepth(self.cube,self.wvt,2120, 2245, 2340,mw=7,hw=3) 
+        return img
+    
+    def BD2265(self, check = False):
+        if check:
+            img = (2120, 2340)
+        elif not check:
+            img = u.getBandDepth(self.cube,self.wvt,2120, 2265, 2340, mw=3,hw=5) 
         return img
     
     def BD2290(self, check = False):
@@ -800,7 +814,8 @@ class paramCalculator:
             shape2d = (np.shape(rp_)[0],np.shape(rp_)[1])
             rp_l=np.reshape(rp_l,shape2d)
             rp_r=np.reshape(rp_r,shape2d)
-            img = (rp_l, rp_r)
+            self.rpeak_reflectance = rp_r
+            img = rp_l
         return img
     
     def BDI1000VIS(self, rp_r=None, check = False):
@@ -808,7 +823,8 @@ class paramCalculator:
             img = (833, 989)
         elif not check:
             if rp_r is None:
-                rp_l, rp_r = self.RPEAK1()
+                rp_l = self.RPEAK1()
+                rp_r = self.rpeak_reflectance
                 
             # multispectral version
             # bdi_wv = [833,860,892,925,951,984,989] 
@@ -881,14 +897,10 @@ class paramCalculator:
         tic = timeit.default_timer()
         # loop through paramList, add result to a tuple. keep track of valid parameters
         paramDict = paramCalculator.__dict__.copy()
-        # p_tuple = tuple([paramDict[param](self) for param in self.validParams])
-        # p_tuple = tuple([paramDict[param](self)[1] if isinstance(paramDict[param](self), tuple) else paramDict[param](self) for param in self.validParams])
         intermediate_list = []
         for param in self.validParams:
             if param == 'BDI1000VIS' and 'RPEAK1' in self.validParams:
-                intermediate_list.append(paramDict[param](self, rp_r=intermediate_list[self.validParams.index('RPEAK1')]))
-            elif isinstance(paramDict[param](self), tuple):
-                intermediate_list.append(paramDict[param](self)[1])
+                intermediate_list.append(paramDict[param](self, rp_r=self.rpeak_reflectance))
             else:
                 intermediate_list.append(paramDict[param](self))
 
