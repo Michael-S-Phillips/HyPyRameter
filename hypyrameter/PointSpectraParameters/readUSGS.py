@@ -4,6 +4,7 @@ Created on Wed Jul 13 15:42:29 2022
 These functions are for reading files downloaded from the USGS splib07a library of reflectance spectra
 Input is a path to the reflectance .txt file. Output is a pandas.DataFrame of the wavelength values and 
 reflectance values.
+
 @author: phillms1
 """
 import numpy as np

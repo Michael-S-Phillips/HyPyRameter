@@ -19,8 +19,8 @@ import tkinter as tk
 from tkinter import filedialog
 import os
 
-from hypyrameter.ImageCubeParameters import param_utils as u
-from hypyrameter.ImageCubeParameters import iovf_generic as iovf
+import hypyrameter.ImageCubeParameters.param_utils as u
+from hypyrameter.ImageCubeParameters.iovf_generic import iovf as iovf
 
 
 class paramCalculator:
@@ -39,7 +39,7 @@ class paramCalculator:
         
     '''
     
-    def __init__(self, crop=None, bbl=[None], flip = False, transpose = False, denoise=False):
+    def __init__(self, crop=None, bbl=[None], flip = False, transpose = False, denoise=False, preview=False):
         """initiation of paramCalculator class
 
         Args:
@@ -116,13 +116,18 @@ class paramCalculator:
             self.denoiser()
 
         self.cube = self.f
+        # remove funky values
+        self.cube = np.where(self.cube>1, np.nan, self.cube)
+        self.cube = np.where(self.cube<-1, np.nan, self.cube)
         self.wvt = self.f_bands
 
         self.validParams = self.determineValidParams()
         
         toc = timeit.default_timer()-tic
         print(f'{np.round(toc/60,2)} minutes to load data')
-        self.previewData()
+
+        if preview is True: 
+            self.previewData()
 
     # -------------------------------------------------------------------------
     # utilities
@@ -131,6 +136,21 @@ class paramCalculator:
         dn = iovf(self.f, '')
         dn.run()
         self.f = dn.flt
+        file_name = self.file.split('/')[-1].split('.')[0]
+        denoised_file_name = self.outdir+'/'+file_name+'_denoised.hdr'
+        meta = self.f_.metadata.copy()
+        try:
+            envi.save_image(denoised_file_name, self.f,
+                            metadata=meta, dtype=np.float32)
+        except EnviException as error:
+            print(error)
+            choice = input('file exists, would you like to overwite?\n\ty or n\n')
+            choice = choice.lower()
+            if choice == 'y':
+                envi.save_image(denoised_file_name, self.f,
+                                metadata=meta, dtype=np.float32, force=True)
+            else:
+                pass
 
     def previewData(self):
         # preview data
@@ -154,7 +174,7 @@ class paramCalculator:
         '''We need a better way to only grab the parameters that are valid for the data cube'''
         paramDict = paramCalculator.__dict__.copy()
         paramList = list(paramDict)[6:-6]
-        print(f'valid parameters:\n\t{paramList}')
+        print(f'all parameters:\n\t{paramList}')
         w_bounds = [paramDict[param](self,check=True) for param in paramList]
 
         # check against parameter values
@@ -404,6 +424,13 @@ class paramCalculator:
             img = (1115, 1260)
         elif not check:
             img = u.getBandDepth(self.cube, self.wvt, 1115, 1200, 1260)
+        return img
+    
+    def BD1300(self, check = False):
+        if check:
+            img = (1080, 1750)
+        elif not check:
+            img = u.getBandDepth(self.cube, self.wvt, 1260, 1320, 1750, mw=15)
         return img
     
     def BD1400(self, check = False):
@@ -794,7 +821,8 @@ class paramCalculator:
             rp_l = np.zeros(flatShape[0])#[]#np.empty(flatShape[0])
             rp_r = np.zeros(flatShape[0])#[]#np.empty(flatShape[0])
             rp_flat = np.reshape(rp_,flatShape)
-            goodIndeces = np.where(rp_flat!=0.0)
+            is_finite_non_zero = np.logical_and(np.isfinite(rp_flat), rp_flat != 0.0)
+            goodIndeces = np.where(is_finite_non_zero)
             goodIndx = np.unique(goodIndeces[0])
             poly=[]
             print('\tpreparing polynomial arguments')
@@ -854,11 +882,14 @@ class paramCalculator:
                 keepIndx = np.where(~np.isnan(spec_vec))[0]
                 wv_um_ = [wv_um[q] for q in keepIndx]
                 spec_vec_ = [spec_vec[q] for q in keepIndx]
+                if not spec_vec_: 
+                    spec_vec_ = np.linspace(0, len(wv_um), len(wv_um))
+                    wv_um_ = wv_um
                 args.append((wv_um_,spec_vec_,4))
             print('\treturning integrated polynomial values')
             with mp.Pool(6) as pool:
                 for integ in pool.imap(u.getPolyInt,args):
-                    bdi1000vis_value.append(integ)
+                        bdi1000vis_value.append(integ)
             
             print('\treshaping array')
             bdi1000vis_value = np.reshape(bdi1000vis_value,(np.shape(bdi_norm)[0],np.shape(bdi_norm)[1]))
@@ -899,6 +930,7 @@ class paramCalculator:
         paramDict = paramCalculator.__dict__.copy()
         intermediate_list = []
         for param in self.validParams:
+            print(f'calculating: {param}')
             if param == 'BDI1000VIS' and 'RPEAK1' in self.validParams:
                 intermediate_list.append(paramDict[param](self, rp_r=self.rpeak_reflectance))
             else:

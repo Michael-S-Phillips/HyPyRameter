@@ -10,6 +10,7 @@ import numpy as np
 from tqdm import tqdm
 from scipy.interpolate import CubicSpline as cs
 import multiprocessing as mp
+import math
 
 # function for parallel processing
 def getCubicSplineIntegral(args):
@@ -22,7 +23,8 @@ def getCubicSplineIntegral(args):
         integrand: integral of cubic spline of defined wavelength region
     """
     wv_um_,spec_vec = args
-    if spec_vec.any() is np.nan:
+    non_finite_values = [value for value in spec_vec if not math.isfinite(value)]
+    if non_finite_values:
         integrand = np.nan
     else:
         splineFit = cs(wv_um_, spec_vec)
