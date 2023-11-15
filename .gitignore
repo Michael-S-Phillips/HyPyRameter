@@ -22,6 +22,10 @@ var/
 *.egg-info/
 .installed.cfg
 *.egg
+channeldata.json
+index.html
+meta.yaml
+setup.py
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
@@ -93,3 +97,6 @@ target/
 figure_preparation.ipynb
 CRISM_type_spectra.ipynb
 hypyrameter/PointSpectraParameters/CRISM_MICA_parameters/
+hypyrameter/ImageCubeParameters/
+hypyrameter/PointSpectraParameters/
+manuscript_prep/
