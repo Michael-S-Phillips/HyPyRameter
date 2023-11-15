@@ -80,8 +80,7 @@ target/
 .ipynb_checkpoints/
 
 # exclude data from source control by default
-/data/
-/examples/
+examples/
 
 # Mac OS-specific storage files
 .DS_Store
