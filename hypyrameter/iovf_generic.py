@@ -26,7 +26,7 @@ from outliers import smirnov_grubbs as grubbs
 from spectral import envi
 from scipy import signal, interpolate
 # from utils import img_cube
-from hypyrameter.bin.iovf_generic_utils import run_vote_block
+from hypyrameter.iovf_generic_utils import run_vote_block
 from tqdm import tqdm
 from IPython.display import clear_output
 
