@@ -28,8 +28,6 @@ Then, run the following command to install hypyrameter:
 ```bash
 conda install hypyrameter
 ```
-Alternatively, HyPyRameter can be used with the Spectral Cube Analysis Tool (SCAT). It is installed along with SCAT, which provides a GUI for running spectral parameters calculations. See the documentation for SCAT for details (https://github.com/Michael-S-Phillips/SCAT).
-
 ### For Developers
 Clone the repository
 ```bash
@@ -62,4 +60,7 @@ pc.run()
 
 ### Point Spectra Parameters
 See the PointSpectraParameters.ipynb file for how to run the Point Spectra Parameters calculation.
+
+
+Alternatively, HyPyRameter can be used with the Spectral Cube Analysis Tool (SCAT). It is installed along with SCAT, which provides a GUI for running spectral parameters calculations. See the documentation for SCAT for details (https://github.com/Michael-S-Phillips/SCAT).
 
