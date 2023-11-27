@@ -1,5 +1,5 @@
 # HyPyRameter
-This repo hosts code that calculates spectral parameters on hyperspectral data.
+This repo hosts code that calculates spectral parameters on hyperspectral reflefctance data.
 
 ## Overview
 The ImageCubeParameters module is designed to handle hyperspectral images in ENVI format (.hdr/.img) and calculate spectral parameters. It also generates browse product summary images based on the input hyperspectral data.
@@ -61,6 +61,6 @@ pc.run()
 ### Point Spectra Parameters
 See the PointSpectraParameters.ipynb file for how to run the Point Spectra Parameters calculation.
 
-### Usage with SCAT
+### Usage with SCAT 
 Alternatively, HyPyRameter can be used with the Spectral Cube Analysis Tool (SCAT). It is installed along with SCAT, which provides a GUI for running spectral parameters calculations. See the documentation for SCAT for details (https://github.com/Michael-S-Phillips/SCAT).
 
