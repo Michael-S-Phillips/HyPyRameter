@@ -6,6 +6,26 @@ The ImageCubeParameters module is designed to handle hyperspectral images in ENV
 The PointSpectraParameters module is designed to handle calculation of parameters from individual spectra from .sed files
 
 ### Installation
+```bash
+conda install -c michael--s--phillips hypyrameter
+```
+Alternatively, HyPyRameter can be used with the Spectral Cube Analysis Tool (SCAT). It is installed along with SCAT, which provides a GUI for running spectral parameters calculations. See the documentation for SCAT for details (https://github.com/Michael-S-Phillips/SCAT)
+
+## Usage
+### Image Cube Parameters
+```python
+#Import the module
+from hypyrameter.paramCalculator import cubeParamCalculator
+# Instantiate the class and select your input image and output directory
+pc = cubeParamCalculator()
+# Run the calculator and save the results
+pc.run()
+```
+
+### Point Spectra Parameters
+See the PointSpectraParameters.ipynb file for how to run the Point Spectra Parameters calculation.
+
+### For Developers
 Clone the repository
 ```bash
 git clone git@github.com:Michael-S-Phillips/HyPyRameter.git
@@ -23,20 +43,4 @@ Activate the environment:
 ```bash
 conda activate hypyrameter
 ```
-
-## Usage
-### Image Cube Parameters
-```python
-#Import the module
-from hypyrameter.paramCalculator import cubeParamCalculator
-# Instantiate the class and select your input image and output directory
-pc = cubeParamCalculator()
-# Run the calculator and save the results
-pc.run()
-```
-
-### Point Spectra Parameters
-See the PointSpectraParameters.ipynb file for how to run the Point Spectra Parameters calculation.
-
-
 

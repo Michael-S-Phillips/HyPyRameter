@@ -125,7 +125,12 @@ class cubeParamCalculator:
         # remove funky values
         self.cube = np.where(self.cube>1, np.nan, self.cube)
         self.cube = np.where(self.cube<-1, np.nan, self.cube)
-        self.wvt = self.f_bands
+        # check if the units are microns or nanometers
+        if self.f_bands[0] <10:
+            # convert to nanometers if in µm
+            self.wvt = [b*1000 for b in self.f_bands]
+        else:
+            self.wvt = self.f_bands
 
         self.validParams = self.determineValidParams()
         
@@ -173,8 +178,8 @@ class cubeParamCalculator:
 
     def determineValidParams(self):
         # get wavelength bounds of data
-        b_min = np.min(self.f_bands)
-        b_max = np.max(self.f_bands)
+        b_min = np.min(self.wvt)
+        b_max = np.max(self.wvt)
 
         # get wavelength bounds for each parameter...
         '''We need a better way to only grab the parameters that are valid for the data cube'''
@@ -216,42 +221,42 @@ class cubeParamCalculator:
         if check:
             img = (463,463)
         elif not check:
-            img = u.getBand(self.f,self.f_bands,463)
+            img = u.getBand(self.f,self.wvt,463)
         return img
         
     def R550(self, check = False):
         if check:
             img = (550,550)
         elif not check:
-            img = u.getBand(self.f,self.f_bands,550)
+            img = u.getBand(self.f,self.wvt,550)
         return img
         
     def R637(self, check = False):
         if check:
             img = (637,637)
         elif not check:
-            img = u.getBand(self.f,self.f_bands,637)
+            img = u.getBand(self.f,self.wvt,637)
         return img
 
     def R1080(self, check = False):
         if check:
             img = (1080,1080)
         elif not check:
-            img = u.getBand(self.f,self.f_bands,1080)
+            img = u.getBand(self.f,self.wvt,1080)
         return img
     
     def R1506(self, check = False):
         if check:
             img = (1506,1506)
         elif not check:
-            img = u.getBand(self.f,self.f_bands,1506)
+            img = u.getBand(self.f,self.wvt,1506)
         return img
     
     def R2529(self, check = False):
         if check:
             img = (2529,2529)
         elif not check:
-            img = u.getBand(self.f,self.f_bands,2529)
+            img = u.getBand(self.f,self.wvt,2529)
         return img
 
     # Index parameters
@@ -587,6 +592,13 @@ class cubeParamCalculator:
         elif not check:
             img = u.getBandDepth(self.cube,self.wvt,2300, 2355, 2450) #(fe/mg phyllo group)
         return img  
+    
+    def BD2600(self, check = False):
+        if check:
+            img = (2530, 2630)
+        elif not check:
+            img = u.getBandDepth(self.cube,self.wvt,2530, 2600, 2630) #(2.6 µm H2O)
+        return img  
       
     def BDCARB(self, check = False):
         if check:
@@ -649,7 +661,7 @@ class cubeParamCalculator:
         return img
     
 # -----------------------------------------------------------------------------------------------
-# Depth (D) parameters
+# Depth (D and shoulder) parameters
     def SH460(self, check = False):
         if check:
             img = (420, 520)
@@ -891,7 +903,7 @@ class cubeParamCalculator:
                 if not spec_vec_: 
                     spec_vec_ = np.linspace(0, len(wv_um), len(wv_um))
                     wv_um_ = wv_um
-                args.append((wv_um_,spec_vec_,4))
+                args.append((wv_um_,spec_vec_, 4))
             print('\treturning integrated polynomial values')
             with mp.Pool(6) as pool:
                 for integ in pool.imap(u.getPolyInt,args):
@@ -903,7 +915,7 @@ class cubeParamCalculator:
 
         return img
     
-    def ISLOPE(self, check = False):
+    def SLOPE1815_2530(self, check = False):
         if check:
             img = (1815, 2530)
         elif not check:
@@ -920,11 +932,25 @@ class cubeParamCalculator:
             img = np.where(img>-np.inf,img,nmin)
         return img
     
-    def IRR2(self, check = False):
+    def BR800(self, check = False):
+        if check:
+            img = (800, 997)
+        elif not check:
+            img = u.getBandRatio(self.cube, self.wvt, 800, 997)
+        return img
+    
+    def BR2530(self, check = False):
         if check:
             img = (2210, 2530)
         elif not check:
-            img = u.getBandRatio(self.cube,self.wvt,2530,2210)
+            img = u.getBandRatio(self.cube, self.wvt, 2530, 2210)
+        return img
+    
+    def BR3500(self, check = False):
+        if check:
+            img = (3390, 3500)
+        elif not check:
+            img = u.getBandRatio(self.cube, self.wvt, 3500, 3390)
         return img
     
     # -------------------------------------------------------------------------
