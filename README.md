@@ -6,7 +6,12 @@ The ImageCubeParameters module is designed to handle hyperspectral images in ENV
 The PointSpectraParameters module is designed to handle calculation of parameters from individual spectra from .sed files
 
 ## Installation
-First, make sure your channels are set in the correct order
+First, create a new environment to install hypyrameter:
+```bash
+conda create -n hypyrameter
+conda activate hypyrameter
+```
+Then, make sure your channels are set in the correct order:
 ```bash
 conda config --add channels michael--s--phillips
 conda config --add channels conda-forge
@@ -19,10 +24,8 @@ channels:
     - michael--s--phillips
     - your other channels
 ```
-Then, run the following commands to install hypyrameter into a new conda environment:
+Then, run the following command to install hypyrameter:
 ```bash
-conda create -n hypyrameter
-conda activate hypyrameter
 conda install hypyrameter
 ```
 Alternatively, HyPyRameter can be used with the Spectral Cube Analysis Tool (SCAT). It is installed along with SCAT, which provides a GUI for running spectral parameters calculations. See the documentation for SCAT for details (https://github.com/Michael-S-Phillips/SCAT).
