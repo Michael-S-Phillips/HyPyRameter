@@ -21,7 +21,7 @@ channels:
 ```
 Then, run the following command to install hypyrameter:
 ```bash
-conda install -c michael--s--phillips hypyrameter
+conda install hypyrameter
 ```
 Alternatively, HyPyRameter can be used with the Spectral Cube Analysis Tool (SCAT). It is installed along with SCAT, which provides a GUI for running spectral parameters calculations. See the documentation for SCAT for details (https://github.com/Michael-S-Phillips/SCAT).
 
