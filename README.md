@@ -28,9 +28,9 @@ conda activate hypyrameter
 ### Image Cube Parameters
 ```python
 #Import the module
-from hypyrameter.ImageCubeParameters.paramCalculator import paramCalculator
+from hypyrameter.paramCalculator import cubeParamCalculator
 # Instantiate the class and select your input image and output directory
-pc = paramCalculator()
+pc = cubeParamCalculator()
 # Run the calculator and save the results
 pc.run()
 ```

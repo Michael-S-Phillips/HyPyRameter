@@ -14,12 +14,12 @@ input:
 """
 import numpy as np
 from tqdm import tqdm
-import copy
+# import copy
 
 class interpNaNs:
     
     def __init__(self, data_cube, band_centers, method='linear'):
-        self.data_cube = copy.deepcopy(data_cube)
+        self.data_cube = data_cube
         self.band_centers = band_centers
         self.method = method
         

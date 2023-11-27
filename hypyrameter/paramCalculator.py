@@ -21,6 +21,7 @@ import pkg_resources
 
 import hypyrameter.utils as u
 from hypyrameter.iovf_generic import iovf as iovf
+from hypyrameter.interpNans import interpNaNs as interpNaNs
 
 
 class cubeParamCalculator:
@@ -39,12 +40,12 @@ class cubeParamCalculator:
         
     '''
     
-    def __init__(self, crop=None, bbl=[None], flip = False, transpose = False, denoise=False, preview=False):
+    def __init__(self, crop=None, bbl=[None], interpNans = False, flip = False, transpose = False, denoise=False, preview=False):
         """initiation of paramCalculator class
 
         Args:
             crop (list, optional): list with starting and ending row and column values for crop region, like [r0, r1, c0, c1]. Defaults to None.
-            bbl (list, optional): bad bands list, integer index values. Defaults to [None].
+            bbl (list, optional): bad bands list, 1=good, 0=bad. Defaults to [None].
             flip (bool, optional): option to flip the image. Defaults to False.
             transpose (bool, optional): option to transpose rows, columns and bands. Defaults to False.
             denoise (bool, optional): option to denoise the image. Defaults to False.
@@ -108,8 +109,13 @@ class cubeParamCalculator:
             self.f = self.f[r0:r1,c0:c1,:]
 
         if bbl[0] is not None:
-            for i in bbl:
-                self.f[:,:,i] = np.nan
+            for i, b in enumerate(bbl):
+                if b==0:
+                    self.f[:,:,i] = np.nan
+            if interpNans:
+                ni = interpNaNs(self.f, self.f_bands)
+                ni.linearInterp()
+                self.f = ni.data_cube
 
         if denoise:
             print('denoising cube')
@@ -644,7 +650,7 @@ class cubeParamCalculator:
     
 # -----------------------------------------------------------------------------------------------
 # Depth (D) parameters
-    def D460(self, check = False):
+    def SH460(self, check = False):
         if check:
             img = (420, 520)
         elif not check:
@@ -678,14 +684,14 @@ class cubeParamCalculator:
             
             # compute the interpolated continuum values at selected wavelengths between 630 and 830
             slope= (R830 - R630)/(W830 - W630)
-            CR740 = R630 + slope*(W740 - W630)
-            CR760 = R630 + slope*(W760 - W630)
-            CR770 = R630 + slope*(W770 - W630)
             CR690 = R630 + slope*(W690 - W630)
             CR710 = R630 + slope*(W710 - W630)
             CR720 = R630 + slope*(W720 - W630)
+            CR740 = R630 + slope*(W740 - W630)
+            CR760 = R630 + slope*(W760 - W630)
+            CR770 = R630 + slope*(W770 - W630)
         
-            # compute d700 with IEEE NaN values in place of CRISM NaN
+            # compute d700 
             img = 1 - (((R690/CR690) + (R710/CR710) + (R720/CR720))/((R740/CR740) + (R760/CR760) + (R770/CR770)))
             nmin = np.nanmin(np.where(img>-np.inf,img,np.nan))
             img = np.where(img>-np.inf,img,nmin) 
@@ -943,7 +949,7 @@ class cubeParamCalculator:
         print(f'calculation took {round(toc/60,2)} minutes')
         return img
     
-    def calculateBrowse(self, stype = 'linear', perc = 2, factor = 2.5):
+    def calculateBrowse(self, stype = 'mad', perc = 2, factor = 2.5):
         file_path = pkg_resources.resource_filename('hypyrameter', 'bin/browseDefinitions.xlsx')
         bf = pd.read_excel(file_path)
         # get valid browse products
@@ -960,7 +966,8 @@ class cubeParamCalculator:
             i1 = self.validParams.index(parameters[1])
             i2 = self.validParams.index(parameters[2])
             browseProduct = u.buildSummary(self.params[:,:,i0], self.params[:,:,i1], self.params[:,:,i2])
-            browseProduct = np.flip(u.browse2bit(u.stretchNBands(u.cropNZeros(browseProduct),stype=stype, perc=perc, factor=factor)),axis=2)
+            # browseProduct = np.flip(u.browse2bit(u.stretchNBands(u.cropNZeros(browseProduct),stype=stype, perc=perc, factor=factor)),axis=2)
+            browseProduct = np.flip(u.browse2bit(u.stretchNBands(browseProduct,stype=stype, perc=perc, factor=factor)),axis=2)
             n = '/' + bp + '.png'
             cv2.imwrite(self.outdir+n, browseProduct)
     

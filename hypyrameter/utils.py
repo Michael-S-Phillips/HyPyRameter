@@ -344,6 +344,21 @@ def stretchBand(p, stype='linear', perc = 2, factor = 2.5):
         # Perform standard deviation stretch
         sp = (img_array - lower_bound) * (255 / (upper_bound - lower_bound))
         sp = np.clip(sp, 0, 255)
+    elif stype == 'mad':
+        # Convert image to numpy array
+        img_array = np.array(p)
+
+        # Calculate median and median absolute deviation of pixel values
+        median = np.median(img_array)
+        mad = np.median(np.abs(img_array - median))
+
+        # Define lower and upper bounds based on standard deviation
+        lower_bound = median - (mad * factor)
+        upper_bound = median + (mad * factor)
+
+        # Perform standard deviation stretch
+        sp = (img_array - lower_bound) * (255 / (upper_bound - lower_bound))
+        sp = np.clip(sp, 0, 255)
 
     return sp
 
