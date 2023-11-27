@@ -61,6 +61,6 @@ pc.run()
 ### Point Spectra Parameters
 See the PointSpectraParameters.ipynb file for how to run the Point Spectra Parameters calculation.
 
-
+### Usage with SCAT
 Alternatively, HyPyRameter can be used with the Spectral Cube Analysis Tool (SCAT). It is installed along with SCAT, which provides a GUI for running spectral parameters calculations. See the documentation for SCAT for details (https://github.com/Michael-S-Phillips/SCAT).
 
