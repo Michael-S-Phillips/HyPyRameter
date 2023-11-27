@@ -440,7 +440,7 @@ class iovf:
             clear_output(wait=True)
             s = self.noise_cube.shape
             vc = np.zeros(s, dtype=int)
-            # getting the all the indeces from surrounding pixels returns the indeces flipped from the input,
+            # getting all the indeces from surrounding pixels returns the indeces flipped from the input,
             # so the for loop indexing of update_indeces is flipped from the above case for round 1
             print('updating indeces to include surrounding pixels')
             update_indeces = self.get_surrounding_indeces(update_indeces, window)
