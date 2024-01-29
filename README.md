@@ -3,7 +3,7 @@ This repo hosts code that calculates spectral parameters on hyperspectral reflef
 
 ## Overview
 The ImageCubeParameters module is designed to handle hyperspectral images in ENVI format (.hdr/.img) and calculate spectral parameters. It also generates browse product summary images based on the input hyperspectral data.
-The PointSpectraParameters module is designed to handle calculation of parameters from individual spectra from .sed files
+The PointSpectraParameters module is designed to handle calculation of parameters from individual spectra from .sed files, a csv file, or a pandas data frame. 
 
 ## Installation
 First, create a new environment to install hypyrameter:
