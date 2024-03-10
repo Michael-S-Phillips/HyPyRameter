@@ -1,6 +1,8 @@
 # HyPyRameter
 This repo hosts code that calculates spectral parameters on hyperspectral reflefctance data.
 
+[![DOI](https://zenodo.org/badge/567958968.svg)](https://zenodo.org/doi/10.5281/zenodo.10801541)
+
 ## Overview
 The ImageCubeParameters module is designed to handle hyperspectral images in ENVI format (.hdr/.img) and calculate spectral parameters. It also generates browse product summary images based on the input hyperspectral data.
 The PointSpectraParameters module is designed to handle calculation of parameters from individual spectra from .sed files, a csv file, or a pandas data frame. 
