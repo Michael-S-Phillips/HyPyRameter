@@ -13,6 +13,7 @@ dependencies:
   - opencv
   - tqdm
   - pip
+  - multiprocess
   - setuptools
   - wheel
   - pip:
