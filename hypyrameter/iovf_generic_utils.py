@@ -48,14 +48,14 @@ def run_vote_block(args, ws, cpus, parallel = False, chunksize = None):
         if chunksize is None:
             chunksize = int(np.ceil(np.asarray(args,dtype='object').shape[0]/denom))
         vbsi = []
-        if __name__ == 'iovf_generic_utils':
-            tic = timeit.default_timer()
-            print('\n\tparallel processing grubbs test')
-            with multiprocessing.Pool(cpus) as pool:
-                for vb in pool.imap(get_vote_block, args,chunksize=chunksize):
-                    vbsi.append(vb)
-            toc = np.round((timeit.default_timer()-tic)/60,2)
-            print(f'\n\tgrubbs testing took {toc} minutes')
+        # if __name__ == 'iovf_generic_utils':
+        tic = timeit.default_timer()
+        print('\n\tparallel processing grubbs test')
+        with multiprocessing.Pool(cpus) as pool:
+            for vb in pool.imap(get_vote_block, args,chunksize=chunksize):
+                vbsi.append(vb)
+        toc = np.round((timeit.default_timer()-tic)/60,2)
+        print(f'\n\tgrubbs testing took {toc} minutes')
     else:
         # this has not been tested
         vbsi = [get_vote_block(arg) for arg in args]

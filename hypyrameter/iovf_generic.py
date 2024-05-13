@@ -44,10 +44,11 @@ class iovf:
     TODO:
     '''
     
-    def __init__(self, pre_image, out_dir, band_centers=False):
+    def __init__(self, pre_image, out_dir, band_centers=False, view_votes = False):
         
         self.pre_cube = pre_image
         self.out_dir = out_dir
+        self.view_votes=view_votes
         if band_centers:
             self.band_centers = band_centers
 
@@ -387,7 +388,7 @@ class iovf:
         print(f'\ntime to make reference cube \n\t{round(toc,2)} s')            
         return ref_cube, noise_cube
         
-    def iterative_outlier_filter(self,update_indeces=None,window=None, chunk_image = False):
+    def iterative_outlier_filter(self,update_indeces=None,window=None):
         if window is None: 
             print('must specifiy a window size')
             sys.exit(1)
@@ -398,7 +399,6 @@ class iovf:
         # update indeces is None when running the whole image cube (first iteration)
         if update_indeces is None:
             s = self.noise_cube.shape
-            # vc = np.zeros(s,dtype=int)
             
             # chunk the image into groups of ~2e6 pixels
             chunks = self.chunk_data()
@@ -440,25 +440,53 @@ class iovf:
             clear_output(wait=True)
             s = self.noise_cube.shape
             vc = np.zeros(s, dtype=int)
+            
             # getting all the indeces from surrounding pixels returns the indeces flipped from the input,
             # so the for loop indexing of update_indeces is flipped from the above case for round 1
             print('updating indeces to include surrounding pixels')
             update_indeces = self.get_surrounding_indeces(update_indeces, window)
+
+            ui_len = np.shape(update_indeces)[1]
             
             # parallel processing of update indeces
-            # get grubbs
-            print('\tgetting data chunks for grubbs test')
-            grubbs_chunks,windows,identifier = self.get_grubbs_chunks(self.noise_cube, window, update_indeces)
-            
-            # get voting blocks
-            print('\n\tpreparing data for parallel grubbs test')
-            grubbs_shape = np.asarray(grubbs_chunks).shape
-            args = [(grubbs_chunks[i],windows[i],identifier[i]) for i in tqdm(range(grubbs_shape[0]))]
-            
-            print('\n\trunning grubbs test')
-            # run all in parallel *****************************
-            vbsi = run_vote_block(args,ws,cpus,parallel=True)
-            
+            # Extract the arguments and chunk the data before the Grubbs test
+            update_indeces_list = []
+            chunk_thresh = int(2e6)  # Set your desired chunk size here
+
+            if ui_len > chunk_thresh:
+                # Determine the number of chunks
+                num_chunks = int((ui_len // chunk_thresh) + 1)
+
+                # Calculate the approximate chunk size
+                ui_chunk_size = int(np.ceil(ui_len / num_chunks))
+                
+                print('\tgetting data chunks for grubbs test')
+                # Split the update indeces into roughly equal chunks
+                update_indeces_list = [update_indeces[i:int(np.min(i + ui_chunk_size, ui_len))] for i in range(0, ui_len, ui_chunk_size)]
+                
+                vbsi_ = []
+                for i, ui in enumerate(update_indeces_list):
+                    print('\n\tprocessing chunk', i + 1, 'of', num_chunks)
+                    grubbs_chunks,windows,identifier = self.get_grubbs_chunks(self.noise_cube, window, ui)
+                    grubbs_shape = np.asarray(grubbs_chunks).shape
+                    print('\n\tpreparing data for parallel grubbs test')
+                    args = [(grubbs_chunks[i],windows[i],identifier[i]) for i in tqdm(range(grubbs_shape[0]))]
+
+                    print('\n\trunning grubbs test')
+                    # Run Grubbs test on each chunk in parallel
+                    vbsi_.append(run_vote_block(args, ws, cpus, parallel=True))
+
+                # make vbsi a flat list
+                vbsi = []
+                for vbsi_chunk in vbsi_:
+                    vbsi += vbsi_chunk
+            else: 
+                print('\n\tpreparing data for parallel grubbs test')
+                grubbs_shape = np.asarray(grubbs_chunks).shape
+                args = [(grubbs_chunks[i],windows[i],identifier[i]) for i in tqdm(range(grubbs_shape[0]))]
+                print('\n\trunning grubbs test')
+                vbsi = run_vote_block(args, ws, cpus, parallel=True)
+
             # build vote cube
             print('\tbuilding vote cube')
             vc = self.build_vote_cube(vbsi, s, window, update_indeces)

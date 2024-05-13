@@ -109,17 +109,27 @@ class cubeParamCalculator:
             self.f = self.f[r0:r1,c0:c1,:]
 
         if bbl[0] is not None:
+            print('setting bad bands to NaN')
             for i, b in enumerate(bbl):
                 if b==0:
                     self.f[:,:,i] = np.nan
             if interpNans:
+                print('interpolating NaNs')
                 ni = interpNaNs(self.f, self.f_bands)
                 ni.linearInterp()
                 self.f = ni.data_cube
 
         if denoise:
             print('denoising cube')
-            self.denoiser()
+            # ask the user if they would like to set view_votes to true:
+            choice = input('would you like to view the votes?\n\ty or n\n')
+            choice = choice.lower()
+            if choice == 'y':
+                view_votes = True
+            else:
+                view_votes = False
+
+            self.denoiser(view_votes = view_votes)
 
         self.cube = self.f
         # remove funky values
@@ -143,8 +153,8 @@ class cubeParamCalculator:
     # -------------------------------------------------------------------------
     # utilities
     # -------------------------------------------------------------------------
-    def denoiser(self):
-        dn = iovf(self.f, '')
+    def denoiser(self, view_votes = False):
+        dn = iovf(self.f, '', view_votes=view_votes)
         dn.run()
         self.f = dn.flt
         file_name = self.file.split('/')[-1].split('.')[0]
@@ -372,6 +382,15 @@ class cubeParamCalculator:
             img = np.where(img>-np.inf,img,nmin)
         return img
     
+    def ESINDEX(self, check = False):
+        if check:
+            img = (420, 950)
+        elif not check:
+            pv1 = u.getSlope(self.cube, self.wvt, 420, 500) * 1000.0 #should be high
+            pv2 = np.abs(u.getSlope(self.cube,self.wvt,550, 950) * 1000.0) #should be low, near 0
+            img = pv1 - pv2
+        return img
+
     def SINDEX2(self, check = False):
         if check:
             img = (2120, 2400)
@@ -381,14 +400,23 @@ class cubeParamCalculator:
     
     def GINDEX(self, check = False):
         if check:
-            img = (1420, 1820)
+            img = (1440, 1570)
         elif not check:
-            t1 = u.getBandArea(self.cube,self.wvt,1420,1463)
-            t2 = u.getBandArea(self.cube,self.wvt,1463,1515)
-            t3 = u.getBandArea(self.cube,self.wvt,1515,1576)
-            b1 = t1*t2*t3
-            b2 = self.BD1750()
-            img = b1+b2
+            t1 = u.getBandDepth(self.cube,self.wvt,1440,1447,1476, lw=1, mw=1, hw=1)
+            t2 = u.getBandDepth(self.cube,self.wvt,1476,1491,1515, lw=1, mw=1, hw=1)
+            t3 = u.getBandDepth(self.cube,self.wvt,1515,1540,1570, lw=1, mw=1, hw=1)
+            b = np.dstack((t1,t2,t3))
+            img = np.nanmin(b,axis=2)
+        return img
+    
+    def CPLINDEX(self, check = False):
+        if check:
+            img = (600, 710)
+        elif not check:
+            b1 = u.getBandDepth(self.cube,self.wvt,600, 626, 646)
+            b2 = u.getBandDepth(self.cube,self.wvt,646, 678, 710)
+            b = np.dstack((b1,b2))
+            img = np.nanmin(b,axis=2)
         return img
     
     # -----------------------------------------------------------------------------------------------
@@ -914,22 +942,31 @@ class cubeParamCalculator:
             img = bdi1000vis_value
 
         return img
-    
+
+    def SLOPE420_500(self, check = False):
+        # values >5 indicative of elemental sulfur
+        if check:
+            img = (420, 500)
+        elif not check:
+            img = u.getSlope(self.cube, self.wvt, 420, 500) * 1000.0
+        return img
+
     def SLOPE1815_2530(self, check = False):
         if check:
             img = (1815, 2530)
         elif not check:
-            # extract individual bands
-            R1815 = u.getBand(self.cube, self.wvt, 1815)
-            R2530 = u.getBand(self.cube, self.wvt, 2530)
+            # # extract individual bands
+            # R1815 = u.getBand(self.cube, self.wvt, 1815)
+            # R2530 = u.getBand(self.cube, self.wvt, 2530)
         
-            W1815 = u.getClosestWavelength(1815,self.wvt)
-            W2530 = u.getClosestWavelength(2530,self.wvt)
+            # W1815 = u.getClosestWavelength(1815,self.wvt)
+            # W2530 = u.getClosestWavelength(2530,self.wvt)
         
-            # want in units of reflectance / um
-            img = 1000.0 * ( R1815 - R2530 )/ ( W2530 - W1815 )
-            nmin = np.nanmin(np.where(img>-np.inf,img,np.nan))
-            img = np.where(img>-np.inf,img,nmin)
+            # # want in units of reflectance / um
+            # img = 1000.0 * ( R1815 - R2530 )/ ( W2530 - W1815 )
+            # nmin = np.nanmin(np.where(img>-np.inf,img,np.nan))
+            # img = np.where(img>-np.inf,img,nmin)
+            img = u.getSlope(self.cube, self.wvt, 1815, 2530) * 1000.0
         return img
     
     def BR800(self, check = False):
@@ -951,6 +988,29 @@ class cubeParamCalculator:
             img = (3390, 3500)
         elif not check:
             img = u.getBandRatio(self.cube, self.wvt, 3500, 3390)
+        return img
+    
+# -------------------------------------------------------------------------
+# normalized difference indeces
+    def NDVI(self, check = False):
+        if check:
+            img = (665, 833)
+        elif not check:
+            img = u.getNDI(self.cube, self.wvt, 833, 665)
+        return img
+    
+    def NDWI(self, check = False):
+        if check:
+            img = (560, 833)
+        elif not check:
+            img = u.getNDI(self.cube, self.wvt, 560, 833)
+        return img
+    
+    def NDMI(self, check = False):
+        if check:
+            img = (833, 1670)
+        elif not check:
+            img = u.getNDI(self.cube, self.wvt, 833, 1670)
         return img
     
     # -------------------------------------------------------------------------
@@ -1029,7 +1089,7 @@ class cubeParamCalculator:
  
 class pointParamCalculator:
     '''
-    this class handles an input .sed or .csv files containing wavelength and reflectance data and returns browse product 
+    this class handles an input .sed, or .csv, or pandas data frame containing wavelength and reflectance data and returns browse product 
     summary values. Alternatively, you can supply a pandas data frame where the rows are reflectance data and the columns are
     spectra. The first column of the data frame must contain the wavelengths for the spectra. Either a data path or a data frame 
     should be provided, not both.
@@ -1041,7 +1101,7 @@ class pointParamCalculator:
             ext = data_path.split('.')[-1]
             if ext == 'csv':
                 df = pd.read_csv(data_path)
-            elif ext == '.sed':
+            elif ext == 'sed':
                 df = u.getSedFiles(data_path)
             else:
                 raise ValueError('data_path must be a .sed or .csv file')
@@ -1221,11 +1281,9 @@ class pointParamCalculator:
             paramValue = (1420, 1820)
         elif not check:
             t1 = u.getRvalueDepth(self.spectrum,self.wvt,1420,1450,1463)
-            t2 = u.getRvalueDepth(self.spectrum,self.wvt,1463,1490,1515)
+            t2 = u.getRvalueDepth(self.spectrum,self.wvt,1463,1491,1515)
             t3 = u.getRvalueDepth(self.spectrum,self.wvt,1515,1540,1576)
-            b1 = t1*t2*t3
-            b2 = self.BD1750()
-            paramValue = b1+b2
+            paramValue = np.nanmin((t1,t2,t3))
         return paramValue
     
     # -----------------------------------------------------------------------------------------------
@@ -1758,5 +1816,7 @@ class pointParamCalculator:
             j += 1
 
         self.parameter_df = pd.DataFrame(parameter_array,columns=self.specNames)
+        # add row labels for each parameter
+        self.parameter_df.set_index(pd.Index(self.validParams),inplace=True)
         return self.parameter_df
     

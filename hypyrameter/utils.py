@@ -137,6 +137,28 @@ def getBandAreaInvert(cube, wvt, low, high, lw=5, hw=5):
     
     return -h
 
+def getSlope(cube, wvt, low, high, kwidth = 5):
+    """retrieve slope
+
+    Args:
+        cube (array): multiband image array
+        wvt (list): wave table
+        low (float): lowest wavelength anchor point
+        high (float): highest wavelength anchor point
+        kwidth (int, optional): kernel width for median filter. Defaults to 5.
+
+    Returns:
+        (array): slope image
+    """
+    y1 = getBand(cube, wvt, low, kwidth=kwidth)
+    x1 = getClosestWavelength(low, wvt)
+    y2 = getBand(cube, wvt, high, kwidth=kwidth)
+    x2 = getClosestWavelength(high, wvt)
+    m = (y2-y1)/(x2-x1) #m is the slope at all pixels
+    nmin = np.nanmin(np.where(m>-np.inf,m,np.nan))
+    img = np.where(m>-np.inf,m,nmin)
+    return img
+
 def getBand(cube,wvt,wl,kwidth = 5):
     """retrieve band closest to target wavelength, wl
 
