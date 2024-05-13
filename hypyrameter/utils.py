@@ -212,6 +212,21 @@ def buildSummary(p1,p2,p3):
     a[:,:,2]=p3
     return a
 
+def getNDI(cube, wvt, a_l, b_l):
+    """calculates normalized difference index
+
+    Args:
+        a (array): parameter 1
+        b (array): parameter 2
+
+    Returns:
+        (array): NDI image
+    """
+    a = getBand(cube, wvt, a_l)
+    b = getBand(cube, wvt, b_l)
+    
+    return (a-b)/(a+b)
+
 def getBandDepth(cube, wvt,low, mid, hi, lw=5, mw=5, hw=5):
     """retrieves band depth
 
@@ -554,6 +569,289 @@ def getRvalueRatio(spectrum, wvt, num_l, denom_l, num_w=5, denom_w=5):
         paramValue = np.nan
     return paramValue
 
+def getRvalueArea(spec, wvt, low, high, lw=5, hw=5):
+    """retrieve band area
+
+    Args:
+        spec (array): pandas df of spectrum
+        wvt (list): pandas df of wavelength values
+        low (float): lowest wavelength anchor point
+        high (float): highest wavelength anchor point
+        lw (int, optional): low wavelength median filter kernel width. Defaults to 5.
+        hw (int, optional): high wavelength median filter kernel width. Defaults to 5.
+
+    Returns:
+        (array): band area value calculated in microns by reflectance
+    """
+    y1 = getRvalue(spec, wvt, low, kwidth=lw)
+    delta = [q - low for q in wvt]
+    x1 = int(delta.index(min(delta, key=abs)))
+    y2 = getRvalue(spec, wvt, high, kwidth=hw)
+    delta = [q - high for q in wvt]
+    x2 = int(delta.index(min(delta, key=abs)))
+    woi_ = np.linspace(wvt.iloc[x1],wvt.iloc[x2],int(wvt.iloc[x2]-wvt.iloc[x1]+1),dtype=int).tolist()
+    woi = [wvt.sub(w).abs().idxmin() for w in woi_]
+    # remove duplicates from woi
+    woi = list(dict.fromkeys(woi))
+    wol = [wvt.iloc[w]for w in woi]
+    x1 = wol[0]
+    x2 = wol[-1]
+    m = (y2-y1)/(x2-x1) #m is the slope at all pixels
+    b = y2-m*x2         #b is the intercept at all pixels
+    h = [getRvalue(spec, wvt, wvt[i], kwidth=1) - (m*wvt[i]+b) for i in woi]
+    ba = -0.001*getCubicSplineIntegral((wol, h))
+    return ba
+
+def getRvalueMin(spec, wvt, low, high, lw=5, hw=5):
+    """retrieve minimum value of an absorption band 
+
+    Args:
+        spec (array): pandas df of spectrum
+        wvt (list): pandas df of wavelength values
+        low (float): lowest wavelength anchor point
+        high (float): highest wavelength anchor point
+        lw (int, optional): low wavelength median filter kernel width. Defaults to 5.
+        hw (int, optional): high wavelength median filter kernel width. Defaults to 5.
+
+    Returns:
+        (array): minimum value of an absorption band 
+    """
+    y1 = getRvalue(spec, wvt, low, kwidth=lw)
+    delta = [q - low for q in wvt]
+    x1 = int(delta.index(min(delta, key=abs)))
+    y2 = getRvalue(spec, wvt, high, kwidth=hw)
+    delta = [q - high for q in wvt]
+    x2 = int(delta.index(min(delta, key=abs)))
+    woi_ = np.linspace(wvt.iloc[x1],wvt.iloc[x2],int(wvt.iloc[x2]-wvt.iloc[x1]+1),dtype=int).tolist()
+    woi = [wvt.sub(w).abs().idxmin() for w in woi_]
+    # remove duplicates from woi
+    woi = list(dict.fromkeys(woi))
+    wol = [wvt.iloc[w]for w in woi]
+    x1 = wol[0]
+    x2 = wol[-1]
+    m = (y2-y1)/(x2-x1) #m is the slope at all pixels
+    b = y2-m*x2         #b is the intercept at all pixels
+    # s0, s1 = y1.shape
+    # s2 = len(woi)
+    y = m*np.array(wol)+b
+    h = [getRvalue(spec, wvt, wvt[i], kwidth=1) - (m*wvt[i]+b) for i in woi]
+
+    # Fit a cubic spline using wol and h
+    cs_ = cs(wol, h)# Find the minimum y value using optimization
+
+    # ----------------------------------------------------------------
+    # option 1
+
+    # Generate a finer mesh of x values
+    x_finer = np.linspace(min(wol), max(wol), 1000)  # Change 1000 to the desired number of points
+
+    # Calculate y values corresponding to the finer mesh of x values
+    y_finer = cs_(x_finer)
+
+    # Find the index of the minimum y value
+    min_y_index = np.argmin(y_finer)
+
+    # The x value at the minimum y value
+    x_at_min_y = 0.001*x_finer[min_y_index]
+    # ----------------------------------------------------------------
+    # option 2
+
+    # Define a function that calculates the value of the CubicSpline at a given x
+    # def spline_at_x(x_value):
+    #     return cs_(x_value)
+
+    # # Use minimize_scalar to find the x value corresponding to the minimum y
+    # result = minimize_scalar(spline_at_x, bounds=(min(wol), max(wol)), method='bounded')
+
+    # # The x value corresponding to the minimum y value
+    # x_at_min_y = 0.001*result.x
+    
+    return x_at_min_y
+
+def getRvalueFWHM(spec, wvt, low, high, lw=5, hw=5):
+    """retrieve minimum value of an absorption band 
+
+    Args:
+        spec (array): pandas df of spectrum
+        wvt (list): pandas df of wavelength values
+        low (float): lowest wavelength anchor point
+        high (float): highest wavelength anchor point
+        lw (int, optional): low wavelength median filter kernel width. Defaults to 5.
+        hw (int, optional): high wavelength median filter kernel width. Defaults to 5.
+
+    Returns:
+        (array): minimum value of an absorption band 
+    """
+    y1 = getRvalue(spec, wvt, low, kwidth=lw)
+    delta = [q - low for q in wvt]
+    x1 = int(delta.index(min(delta, key=abs)))
+    y2 = getRvalue(spec, wvt, high, kwidth=hw)
+    delta = [q - high for q in wvt]
+    x2 = int(delta.index(min(delta, key=abs)))
+    woi_ = np.linspace(wvt.iloc[x1],wvt.iloc[x2],int(wvt.iloc[x2]-wvt.iloc[x1]+1),dtype=int).tolist()
+    woi = [wvt.sub(w).abs().idxmin() for w in woi_]
+    # remove duplicates from woi
+    woi = list(dict.fromkeys(woi))
+    wol = [wvt.iloc[w]for w in woi]
+    x1 = wol[0]
+    x2 = wol[-1]
+    m = (y2-y1)/(x2-x1) #m is the slope at all pixels
+    b = y2-m*x2         #b is the intercept at all pixels
+    # s0, s1 = y1.shape
+    # s2 = len(woi)
+    y = m*np.array(wol)+b
+    h = [getRvalue(spec, wvt, wvt[i], kwidth=1) - (m*wvt[i]+b) for i in woi]
+
+    # Fit a cubic spline using wol and h
+    cs_ = cs(wol, h)# Find the minimum y value using optimization
+
+    # ----------------------------------------------------------------
+    # option 1
+    
+    # Generate a finer mesh of x values
+    x_finer = np.linspace(min(wol), max(wol), 1000)  # Change 1000 to the desired number of points
+
+    # Calculate y values corresponding to the finer mesh of x values
+    y_finer = cs_(x_finer)
+
+    # Find the index of the minimum y value
+    min_y_index = np.argmin(y_finer)
+
+    # The x value at the minimum y value
+    x_at_min_y = x_finer[min_y_index]
+    y_min = y_finer[min_y_index]
+
+    # ----------------------------------------------------------------
+    # option 2
+    # Define a function that calculates the value of the CubicSpline at a given x
+    # def spline_at_x(x_value):
+    #     return cs_(x_value)
+
+    # # Use minimize_scalar to find the x value corresponding to the minimum y
+    # result = minimize_scalar(spline_at_x, bounds=(min(wol), max(wol)), method='bounded')
+
+    # # The x value corresponding to the minimum y value
+    # x_at_min_y = result.x
+    # y_min = result.fun
+
+    # calculate the full width half maximum of the band defined by wol and h
+    half_max = y_min/2
+    peak_index = np.argmin(np.abs(h - y_min))
+
+    # Find the indices where the intensity is closest to half of the maximum intensity
+    try:
+        left_index = np.argmin(np.abs(h[:peak_index] - half_max))
+        right_index = np.argmin(np.abs(h[peak_index:] - half_max)) + peak_index
+
+        # Calculate the FWHM
+        fwhm = 0.001*(wol[right_index] - wol[left_index])
+    except:
+        fwhm = np.nan
+    
+    return fwhm
+
+def getRvalueAsymmetry(spec, wvt, low, high, lw=5, hw=5):
+    """retrieve band asymmetry
+
+    Args:
+        spec (array): pandas df of spectrum
+        wvt (list): pandas df of wavelength values
+        low (float): lowest wavelength anchor point
+        high (float): highest wavelength anchor point
+        lw (int, optional): low wavelength median filter kernel width. Defaults to 5.
+        hw (int, optional): high wavelength median filter kernel width. Defaults to 5.
+
+    Returns:
+        (array): band asymmetry value 
+    """
+    y1 = getRvalue(spec, wvt, low, kwidth=lw)
+    delta = [q - low for q in wvt]
+    x1 = int(delta.index(min(delta, key=abs)))
+    y2 = getRvalue(spec, wvt, high, kwidth=hw)
+    delta = [q - high for q in wvt]
+    x2 = int(delta.index(min(delta, key=abs)))
+    woi_ = np.linspace(wvt.iloc[x1],wvt.iloc[x2],int(wvt.iloc[x2]-wvt.iloc[x1]+1),dtype=int).tolist()
+    woi = [wvt.sub(w).abs().idxmin() for w in woi_]
+    # remove duplicates from woi
+    woi = list(dict.fromkeys(woi))
+    wol = [wvt.iloc[w]for w in woi]
+    x1 = wol[0]
+    x2 = wol[-1]
+    m = (y2-y1)/(x2-x1) #m is the slope at all pixels
+    b = y2-m*x2         #b is the intercept at all pixels
+    y = m*np.array(wol)+b
+    h = [getRvalue(spec, wvt, wvt[i], kwidth=1) - (m*wvt[i]+b) for i in woi]
+
+    # Fit a cubic spline using wol and h
+    cs_ = cs(wol, h)# Find the minimum y value using optimization
+
+    # ----------------------------------------------------------------
+    # option 1
+    
+    # Generate a finer mesh of x values
+    x_finer = np.linspace(min(wol), max(wol), 1000)  # Change 1000 to the desired number of points
+
+    # Calculate y values corresponding to the finer mesh of x values
+    y_finer = cs_(x_finer)
+
+    # Find the index of the minimum y value
+    min_y_index = np.argmin(y_finer)
+
+    # The x value at the minimum y value
+    x_at_min_y = x_finer[min_y_index]
+    y_min = y_finer[min_y_index]
+
+    # ----------------------------------------------------------------
+    # option 2
+    # Define a function that calculates the value of the CubicSpline at a given x
+    # def spline_at_x(x_value):
+    #     return cs_(x_value)
+
+    # # Use minimize_scalar to find the x value corresponding to the minimum y
+    # result = minimize_scalar(spline_at_x, bounds=(min(wol), max(wol)), method='bounded')
+
+    # # The x value corresponding to the minimum y value
+    # x_at_min_y = result.x
+    # y_min = result.fun
+
+    # calculate the full width half maximum of the band defined by wol and h
+    peak_index = np.argmin(np.abs(h - y_min))
+
+    # calculate the band area
+    ba = -0.001*getCubicSplineIntegral((wol, h))
+
+    # calculate band area to the left of the band center
+    ba_left = -0.001*getCubicSplineIntegral((wol[:peak_index], h[:peak_index]))
+
+    # calculate band area to the right of the band center
+    ba_right = -0.001*getCubicSplineIntegral((wol[peak_index:], h[peak_index:]))
+
+    basym = np.log10(ba_right/ba_left)
+    # basym = (ba_right-ba_left)/ba
+
+    return basym
+
+def getRSlope(spec, wvt, low, high, kwidth = 5):
+    """retrieve slope
+
+    Args:
+        cube (array): multiband image array
+        wvt (list): wave table
+        low (float): lowest wavelength anchor point
+        high (float): highest wavelength anchor point
+        kwidth (int, optional): kernel width for median filter. Defaults to 5.
+
+    Returns:
+        (array): slope image
+    """
+    y1 = getRvalue(spec, wvt, low, kwidth=kwidth)
+    x1 = getClosestWavelength(low, wvt)
+    y2 = getRvalue(spec, wvt, high, kwidth=kwidth)
+    x2 = getClosestWavelength(high, wvt)
+    m = (y2-y1)/(x2-x1) #m is the slope 
+    # nmin = np.nanmin(np.where(m>-np.inf,m,np.nan))
+    # s = np.where(m>-np.inf,m,nmin)
+    return m
 # ----------------------------------------------------------------
 # read info from .sed files
 # ----------------------------------------------------------------
