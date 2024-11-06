@@ -8,10 +8,12 @@ utility functions for parameter calculations
 """
 import numpy as np
 from scipy.interpolate import CubicSpline as cs
+from scipy.interpolate import UnivariateSpline
 import multiprocessing as mp
 import math
 import glob
 import pandas as pd
+from scipy.signal import savgol_filter
 
 
 # -----------------------------------------------------
@@ -226,6 +228,21 @@ def getNDI(cube, wvt, a_l, b_l):
     b = getBand(cube, wvt, b_l)
     
     return (a-b)/(a+b)
+
+def getSmoothRpeak(x, y, wl= 7, po = 3):
+    # smooth
+    y_sav = savgol_filter(y, window_length=wl, polyorder=po)
+    # fit spline
+    spline = UnivariateSpline(x, y_sav, k=5, s=0.1)
+
+    # Find the maximum of the fitted spline
+    x_range = np.linspace(min(x), max(x), 5000)
+    y_spline = spline(x_range)
+    max_y = np.max(y_spline)
+    max_x = x_range[np.argmax(y_spline)]
+
+    return max_x/1000, max_y
+
 
 def getBandDepth(cube, wvt,low, mid, hi, lw=5, mw=5, hw=5):
     """retrieves band depth

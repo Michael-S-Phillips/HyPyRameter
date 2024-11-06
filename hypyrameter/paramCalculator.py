@@ -855,10 +855,10 @@ class cubeParamCalculator:
 # All other parameters (ratios, slopes, peaks)
     def RPEAK1(self, check = False):
         if check:
-            img = (442, 963)
+            img = (442, 989)
         elif not check:
             # old, but functional, RPEAK1
-            rp_wv = [442,533,600,710,740,775,800,833,860,892,925,963]
+            rp_wv = [442,533,600,710,740,775,800,833,860,892,925,963,989]
             rp_i = [self.wvt.index(u.getClosestWavelength(i,self.wvt)) for i in rp_wv]
             rp_w = [u.getClosestWavelength(i,self.wvt) for i in rp_wv]
             rp_ = self.cube[:,:,rp_i]
@@ -883,6 +883,58 @@ class cubeParamCalculator:
             for j,i in tqdm(enumerate(goodIndx)):
                 rp_l[i] = x_[list(poly[j](x_)).index(np.nanmax(poly[j](x_)))]/1000 
                 rp_r[i] = np.nanmax(poly[j](x_)) 
+            
+            print('\tre-shaping arrays')
+            shape2d = (np.shape(rp_)[0],np.shape(rp_)[1])
+            rp_l=np.reshape(rp_l,shape2d)
+            rp_r=np.reshape(rp_r,shape2d)
+            self.rpeak_reflectance = rp_r
+            img = rp_l
+        return img
+    
+    def RPEAK1_2(self, check = False):
+        if check:
+            img = (500, 1150)
+        elif not check:
+            from scipy.signal import savgol_filter
+            from scipy.interpolate import UnivariateSpline
+
+            # new RPEAK1, smooth data first
+            wvl_mask = (self.wvt >= 500) & (self.wvt <= 1150)
+            rp_wv = self.wvt[wvl_mask]
+            rp_i = [self.wvt.index(u.getClosestWavelength(i,self.wvt)) for i in rp_wv]
+            rp_w = [u.getClosestWavelength(i,self.wvt) for i in rp_wv]
+            rp_ = self.cube[:,:,rp_i]
+            x_ = np.linspace(rp_w[0],rp_w[-1],num=521)
+            flatShape=(np.shape(rp_)[0]*np.shape(rp_)[1],np.shape(rp_)[2])       
+            rp_l = np.zeros(flatShape[0])#[]#np.empty(flatShape[0])
+            rp_r = np.zeros(flatShape[0])#[]#np.empty(flatShape[0])
+            rp_flat = np.reshape(rp_,flatShape)
+            is_finite_non_zero = np.logical_and(np.isfinite(rp_flat), rp_flat != 0.0)
+            goodIndeces = np.where(is_finite_non_zero)
+            goodIndx = np.unique(goodIndeces[0])
+
+            y_savgol = []
+            print('\tcalculating smoothed univariate splines')
+            args = [(rp_w, rp_flat[i,:]) for i in tqdm(goodIndx)]
+            print('\n\tcalculating rpeak1_2 from smoothed univariate splines')
+            with mp.Pool(6) as pool:
+                for l, r in pool.imap(u.getSmoothRpeak, args):
+                    rp_l.append(l)
+                    rp_r.append(r)
+            # poly=[]
+            # print('\tpreparing polynomial arguments')
+            # # parallel attempt
+            # args = [(rp_w,rp_flat[i,:],5) for i in tqdm(goodIndx)]
+            # print('\n\tcalculating polynomials')
+            # with mp.Pool(6) as pool:
+            #     for p in pool.imap(u.getPoly,args):
+            #         poly.append(p)
+                
+            # print('\treturning peak reflectance and wavelengths of peak reflectance')
+            # for j,i in tqdm(enumerate(goodIndx)):
+            #     rp_l[i] = x_[list(poly[j](x_)).index(np.nanmax(poly[j](x_)))]/1000 
+            #     rp_r[i] = np.nanmax(poly[j](x_)) 
             
             print('\tre-shaping arrays')
             shape2d = (np.shape(rp_)[0],np.shape(rp_)[1])
@@ -1735,11 +1787,11 @@ class pointParamCalculator:
     
     def RPEAK1(self, check = False):
         if check:
-            return (442, 963)
+            return (442, 989)
         elif not check:
             spectrum = self.spectrum
             wvt = list(self.wvt)
-            rp_wv = [442,533,600,710,740,775,800,833,860,892]
+            rp_wv = [442,533,600,710,740,775,800,833,860,892,925,963,989]
             rp_i = [wvt.index(u.getClosestWavelength(i,wvt)) for i in rp_wv]
             rp_w = [u.getClosestWavelength(i,wvt) for i in rp_wv]
             rp_ = spectrum.iloc[rp_i]
@@ -1753,6 +1805,35 @@ class pointParamCalculator:
             rp_r = np.max(y_)
             self.rpeak_reflectance = rp_r
             return rp_l
+    
+    def RPEAK1_2(self, check = False):
+        if check:
+            return (500, 1150)
+        elif not check:
+            from scipy.signal import savgol_filter
+            from scipy.interpolate import UnivariateSpline
+            spectrum = self.spectrum
+            wvt = np.array(self.wvt)  # Convert to NumPy array for proper masking
+            wvl_mask = (wvt >= 500) & (wvt <= 1150)
+            rp_wv = wvt[wvl_mask]
+            rp_i = [np.where(wvt == u.getClosestWavelength(i, wvt))[0][0] for i in rp_wv]
+            rp_w = [u.getClosestWavelength(i, wvt) for i in rp_wv]
+            rp_ = spectrum.iloc[rp_i].values  # Ensure this returns a NumPy array
+            x_ = np.linspace(rp_w[0], rp_w[-1], num=5000)
+
+            # Smooth
+            y_sav = savgol_filter(rp_, window_length=7, polyorder=3)
+
+            # Fit spline
+            spline = UnivariateSpline(rp_w, y_sav, k=5, s=0.1)
+
+            # Find the maximum of the fitted spline
+            y_spline = spline(x_)
+            max_y = np.max(y_spline)
+            max_x = x_[np.argmax(y_spline)]
+            self.rpeak_reflectance = max_y
+
+            return max_x / 1000
    
     def BDI1000VIS(self,rp_r=False, check = False):
         if check:
