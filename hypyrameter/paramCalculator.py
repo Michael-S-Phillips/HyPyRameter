@@ -853,6 +853,13 @@ class cubeParamCalculator:
     
 # -----------------------------------------------------------------------------------------------
 # All other parameters (ratios, slopes, peaks)
+    def BH1500(self, check = False):
+        if check:
+            img = (1250, 1750)
+        elif not check:
+            img = u.getBandDepthInvert(self.cube, self.wvt, 1250, 1510, 1750)
+        return img
+    
     def RPEAK1(self, check = False):
         if check:
             img = (442, 989)
@@ -900,8 +907,9 @@ class cubeParamCalculator:
             from scipy.interpolate import UnivariateSpline
 
             # new RPEAK1, smooth data first
-            wvl_mask = (self.wvt >= 500) & (self.wvt <= 1150)
-            rp_wv = self.wvt[wvl_mask]
+            wvt_array = np.array(self.wvt)
+            wvl_mask = (wvt_array >= 500) & (wvt_array <= 1150)
+            rp_wv = wvt_array[wvl_mask]
             rp_i = [self.wvt.index(u.getClosestWavelength(i,self.wvt)) for i in rp_wv]
             rp_w = [u.getClosestWavelength(i,self.wvt) for i in rp_wv]
             rp_ = self.cube[:,:,rp_i]

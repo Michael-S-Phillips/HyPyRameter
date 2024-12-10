@@ -229,7 +229,8 @@ def getNDI(cube, wvt, a_l, b_l):
     
     return (a-b)/(a+b)
 
-def getSmoothRpeak(x, y, wl= 7, po = 3):
+def getSmoothRpeak(args,  wl= 7, po = 3):
+    x, y = args
     # smooth
     y_sav = savgol_filter(y, window_length=wl, polyorder=po)
     # fit spline
