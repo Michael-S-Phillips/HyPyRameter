@@ -915,8 +915,8 @@ class cubeParamCalculator:
             rp_ = self.cube[:,:,rp_i]
             x_ = np.linspace(rp_w[0],rp_w[-1],num=521)
             flatShape=(np.shape(rp_)[0]*np.shape(rp_)[1],np.shape(rp_)[2])       
-            rp_l = np.zeros(flatShape[0])#[]#np.empty(flatShape[0])
-            rp_r = np.zeros(flatShape[0])#[]#np.empty(flatShape[0])
+            rp_l = []#np.empty(flatShape[0]) #np.zeros(flatShape[0])
+            rp_r = []#np.empty(flatShape[0]) #np.zeros(flatShape[0])
             rp_flat = np.reshape(rp_,flatShape)
             is_finite_non_zero = np.logical_and(np.isfinite(rp_flat), rp_flat != 0.0)
             goodIndeces = np.where(is_finite_non_zero)
