@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hypyrameter"
+version = "0.2.3"
+description = "Calculate spectral parameters on hyperspectral data."
+readme = "README.md"
+authors = [{ name = "Michael S. Phillips" }]
+requires-python = ">=3.10"
+# Everything the package imports at runtime, so that
+#   pip install git+https://github.com/Michael-S-Phillips/HyPyRameter.git
+# yields a working install.
+dependencies = [
+    "numpy",
+    "scipy",
+    "pandas",
+    "matplotlib",
+    "opencv-python",
+    "spectral",
+    "tqdm",
+    "openpyxl",
+    "outlier-utils",
+    "multiprocess",
+    "ipython",
+]
+
+[tool.setuptools.packages.find]
+include = ["hypyrameter*"]
+
+[tool.setuptools.package-data]
+hypyrameter = ["bin/*.xlsx"]
