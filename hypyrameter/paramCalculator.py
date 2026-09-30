@@ -17,7 +17,7 @@ from spectral.io.envi import EnviException as EnviException
 import tkinter as tk
 from tkinter import filedialog
 import os
-import pkg_resources
+from importlib import resources as importlib_resources
 
 import hypyrameter.utils as u
 from hypyrameter.iovf_generic import iovf as iovf
@@ -40,7 +40,7 @@ class cubeParamCalculator:
         
     '''
     
-    def __init__(self, crop=None, bbl=[None], interpNans = False, flip = False, transpose = False, denoise=False, preview=False):
+    def __init__(self, in_file = None, crop=None, bbl=[None], interpNans = False, flip = False, transpose = False, denoise=False, preview=False):
         """initiation of paramCalculator class
 
         Args:
@@ -57,8 +57,11 @@ class cubeParamCalculator:
         root.withdraw()  # Hide the root window
 
         # Use the file dialog to select a '.hdr' file
-        print("Select input hyperspectral cube")
-        self.file = filedialog.askopenfilename(filetypes=[("Select input hyperspectral cube", "*.hdr")])
+        if in_file is None:
+            print("Select input hyperspectral cube")
+            self.file = filedialog.askopenfilename(filetypes=[("Select input hyperspectral cube", "*.hdr")])
+        else:
+            self.file = in_file
 
         # Check if the user selected a file
         if hasattr(self, 'file'):
@@ -419,6 +422,32 @@ class cubeParamCalculator:
             img = np.nanmin(b,axis=2)
         return img
     
+    def CHLORINDEX(self, check = False):
+        '''chlorite index'''
+        if check:
+            img = (1800, 2450)
+        elif not check:
+            bd2347 = u.getBandDepth(self.cube,self.wvt,2286, 2347, 2408)
+            bd2254 = u.getBandDepth(self.cube,self.wvt,2184, 2254, 2279)
+            bd2000 = u.getBandDepth(self.cube,self.wvt,1986, 2000, 2030)
+            bd1921 = u.getBandDepth(self.cube,self.wvt,1888, 1921, 1962)
+            th2105 = u.getBandDepthInvert(self.cube,self.wvt,2000, 2105, 2257)
+            # change shapes to (row, column band)
+            bd2347 = np.expand_dims(bd2347, axis=2)
+            bd2254 = np.expand_dims(bd2254, axis=2)
+            bd2000 = np.expand_dims(bd2000, axis=2)
+            bd1921 = np.expand_dims(bd1921, axis=2)
+            th2105 = np.expand_dims(th2105, axis=2)
+            weights = np.array((0.25, 0.25, 0.25, 0.25, 0.05))
+            weights = list(weights / weights.sum())
+            img = np.nansum(bd2347 * weights[0] + bd2254 * weights[1] + bd2000 * weights[2] + bd1921 * weights[3] + th2105 * weights[4], axis=2)
+            img -= self.BD2210_2()
+            nmin = np.nanmin(np.where(img>-np.inf,img,np.nan))
+            img = np.where(img>-np.inf,img,nmin)
+            img = img.squeeze()
+
+        return img
+    
     # -----------------------------------------------------------------------------------------------
     # Band Depth (BD) Parameters
     def BD530_2(self, check = False):
@@ -612,6 +641,13 @@ class cubeParamCalculator:
             img = (2250, 2350)
         elif not check:
             img = u.getBandDepth(self.cube,self.wvt,2250, 2290, 2350) #(fe/mg phyllo group)
+        return img
+    
+    def BD2443(self, check = False):
+        if check:
+            img = (2320, 2480)
+        elif not check:
+            img = u.getBandDepth(self.cube,self.wvt,2320, 2443, 2480) #(nitrate)
         return img
     
     def BD2355(self, check = False):
@@ -913,23 +949,28 @@ class cubeParamCalculator:
             rp_i = [self.wvt.index(u.getClosestWavelength(i,self.wvt)) for i in rp_wv]
             rp_w = [u.getClosestWavelength(i,self.wvt) for i in rp_wv]
             rp_ = self.cube[:,:,rp_i]
+            print(rp_.shape)
             x_ = np.linspace(rp_w[0],rp_w[-1],num=521)
             flatShape=(np.shape(rp_)[0]*np.shape(rp_)[1],np.shape(rp_)[2])       
-            rp_l = []#np.empty(flatShape[0]) #np.zeros(flatShape[0])
-            rp_r = []#np.empty(flatShape[0]) #np.zeros(flatShape[0])
+            rp_l = np.zeros(flatShape[0]) #[]#np.empty(flatShape[0]) #np.zeros(flatShape[0])
+            rp_r = np.zeros(flatShape[0]) #[]#np.empty(flatShape[0]) #np.zeros(flatShape[0])
             rp_flat = np.reshape(rp_,flatShape)
             is_finite_non_zero = np.logical_and(np.isfinite(rp_flat), rp_flat != 0.0)
             goodIndeces = np.where(is_finite_non_zero)
             goodIndx = np.unique(goodIndeces[0])
-
-            y_savgol = []
+            
             print('\tcalculating smoothed univariate splines')
             args = [(rp_w, rp_flat[i,:]) for i in tqdm(goodIndx)]
             print('\n\tcalculating rpeak1_2 from smoothed univariate splines')
+            lr_results = []
             with mp.Pool(6) as pool:
                 for l, r in pool.imap(u.getSmoothRpeak, args):
-                    rp_l.append(l)
-                    rp_r.append(r)
+                    lr_results.append((l, r))
+                    # rp_l.append(l)
+                    # rp_r.append(r)
+            for j, i in tqdm(enumerate(goodIndx)):
+                rp_l[i] = lr_results[j][0]
+                rp_r[i] = lr_results[j][1]
             # poly=[]
             # print('\tpreparing polynomial arguments')
             # # parallel attempt
@@ -1096,7 +1137,7 @@ class cubeParamCalculator:
         return img
     
     def calculateBrowse(self, stype = 'mad', perc = 2, factor = 2.5):
-        file_path = pkg_resources.resource_filename('hypyrameter', 'bin/browseDefinitions.xlsx')
+        file_path = str(importlib_resources.files('hypyrameter').joinpath('bin/browseDefinitions.xlsx'))
         bf = pd.read_excel(file_path)
         # get valid browse products
         # Filter the DataFrame of browse products based on valid parameters

@@ -237,9 +237,9 @@ def getSmoothRpeak(args,  wl= 7, po = 3):
     spline = UnivariateSpline(x, y_sav, k=5, s=0.1)
 
     # Find the maximum of the fitted spline
-    x_range = np.linspace(min(x), max(x), 5000)
+    x_range = np.linspace(min(x), max(x), 500)
     y_spline = spline(x_range)
-    max_y = np.max(y_spline)
+    max_y = np.nanmax(y_spline)
     max_x = x_range[np.argmax(y_spline)]
 
     return max_x/1000, max_y
