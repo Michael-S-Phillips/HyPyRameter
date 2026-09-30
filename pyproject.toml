@@ -48,7 +48,7 @@ hypyrameter = ["data/*.csv"]
 testpaths = ["tests"]
 
 [tool.ruff]
-extend-exclude = ["hypyrameter/iovf_generic.py", "hypyrameter/iovf_generic_utils.py", "*.ipynb"]
+extend-exclude = ["hypyrameter/iovf_generic.py", "hypyrameter/iovf_generic_utils.py", "*.ipynb", "*.md"]
 line-length = 100
 target-version = "py310"
 
