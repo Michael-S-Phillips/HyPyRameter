@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hypyrameter"
+version = "0.3.0"
+description = "Spectral parameters (band depths, slopes, peaks, indices) for hyperspectral reflectance data."
+readme = "README.md"
+license = "CC-BY-4.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Michael S. Phillips", email = "phillipsm@arizona.edu" }]
+requires-python = ">=3.10"
+keywords = ["hyperspectral", "spectroscopy", "CRISM", "EMIT", "spectral parameters"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "pandas>=2.0",
+    "spectral>=0.23",
+]
+
+[project.optional-dependencies]
+# writing browse-product PNGs
+browse = ["imageio>=2.30"]
+# the IOVF denoiser
+denoise = ["outlier-utils", "tqdm", "matplotlib"]
+# running the example notebooks
+notebooks = ["jupyterlab", "ipywidgets", "matplotlib"]
+
+[project.urls]
+Homepage = "https://github.com/Michael-S-Phillips/HyPyRameter"
+Issues = "https://github.com/Michael-S-Phillips/HyPyRameter/issues"
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6", "imageio>=2.30", "matplotlib", "build", "twine"]
+
+[tool.setuptools.packages.find]
+include = ["hypyrameter*"]
+
+[tool.setuptools.package-data]
+hypyrameter = ["data/*.csv"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+extend-exclude = ["hypyrameter/iovf_generic.py", "hypyrameter/iovf_generic_utils.py", "*.ipynb"]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+per-file-ignores = { "hypyrameter/utils.py" = ["E501", "F841", "E722"] }
+select = ["E", "F", "W", "I", "B", "UP"]
