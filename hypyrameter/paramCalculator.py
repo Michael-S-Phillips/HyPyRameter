@@ -1,1952 +1,221 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Created on Sun Jul 10 13:33:42 2022
+"""The 0.2.x entry points, kept as thin wrappers over :mod:`hypyrameter.parameters`.
 
-@author: phillms1
+``cubeParamCalculator`` reads an ENVI cube, computes every valid parameter
+(or the ones you name), writes a ``<name>_params`` ENVI cube and browse PNGs.
+``pointParamCalculator`` does the same for a table of spectra and returns a
+DataFrame of parameters by spectrum. New code should call
+:func:`hypyrameter.compute` directly.
 """
+
+from __future__ import annotations
+
+import logging
+from collections.abc import Sequence
+from pathlib import Path
+
 import numpy as np
-import timeit
-import cv2
-from matplotlib import pyplot as plt 
-import spectral.io.envi as envi
-import multiprocessing as mp
-from tqdm import tqdm
 import pandas as pd
-from spectral.io.envi import EnviException as EnviException
-import tkinter as tk
-from tkinter import filedialog
-import os
-from importlib import resources as importlib_resources
 
-import hypyrameter.utils as u
-from hypyrameter.iovf_generic import iovf as iovf
-from hypyrameter.interpNans import interpNaNs as interpNaNs
+from hypyrameter import utils as u
+from hypyrameter.bands import apply_bad_bands, fill_nans_along_spectrum, to_nanometres
+from hypyrameter.browse import valid_browse_products, write_browse_products
+from hypyrameter.io import read_envi, write_envi
+from hypyrameter.parameters import clamp_reflectance, compute, valid_parameters
+
+logger = logging.getLogger(__name__)
+
+
+def _ask_for_file() -> str:
+    from tkinter import Tk, filedialog  # only when no in_file was given
+
+    root = Tk()
+    root.withdraw()
+    try:
+        return filedialog.askopenfilename(filetypes=[("ENVI header", "*.hdr")])
+    finally:
+        root.destroy()
+
+
+def _ask_for_directory() -> str:
+    from tkinter import Tk, filedialog
+
+    root = Tk()
+    root.withdraw()
+    try:
+        return filedialog.askdirectory()
+    finally:
+        root.destroy()
 
 
 class cubeParamCalculator:
-    """this class handles an input hyperspectral image (an envi .img) and returns a spectral parameter image cube (as an envi .img)
+    """Spectral parameters and browse products for an ENVI image cube.
 
-    Returns:
-        object: class object to calculate spectral parameters
+    Args:
+        in_file: path to the ``.hdr``; a file dialog asks for one if omitted.
+        outdir: where ``run()`` writes; a dialog asks if omitted.
+        crop: ``[r0, r1, c0, c1]`` rows and columns to keep.
+        bbl: bad-band list (1 = good, 0 = bad); bad bands become NaN.
+        interpNans: fill bad bands by linear interpolation along the spectrum.
+        flip / transpose: reorient the cube before anything else.
+        parameters: names to compute; every valid parameter by default.
+        denoise / preview: kept for compatibility; the denoiser lives in
+            :mod:`hypyrameter.iovf_generic` and previews are left to the caller.
     """
-    '''
-    this class handles an input hyperspectral image (an envi .img) and returns 
-    browse product summary images
-    
-    I/O
-    file: /path/to/image.hdr
-        this is a .hdr file, not the .img
-        
-    '''
-    
-    def __init__(self, in_file = None, crop=None, bbl=[None], interpNans = False, flip = False, transpose = False, denoise=False, preview=False):
-        """initiation of paramCalculator class
 
-        Args:
-            crop (list, optional): list with starting and ending row and column values for crop region, like [r0, r1, c0, c1]. Defaults to None.
-            bbl (list, optional): bad bands list, 1=good, 0=bad. Defaults to [None].
-            flip (bool, optional): option to flip the image. Defaults to False.
-            transpose (bool, optional): option to transpose rows, columns and bands. Defaults to False.
-            denoise (bool, optional): option to denoise the image. Defaults to False.
-        """
-        
-        tic = timeit.default_timer()
-        # Create a tkinter root window (it won't be shown)
-        root = tk.Tk()
-        root.withdraw()  # Hide the root window
-
-        # Use the file dialog to select a '.hdr' file
-        if in_file is None:
-            print("Select input hyperspectral cube")
-            self.file = filedialog.askopenfilename(filetypes=[("Select input hyperspectral cube", "*.hdr")])
-        else:
-            self.file = in_file
-
-        # Check if the user selected a file
-        if hasattr(self, 'file'):
-            # Check the file extension
-            _, file_extension = os.path.splitext(self.file)
-            if file_extension.lower() == ".hdr":
-                print("Selected file:", self.file)
-            else:
-                print("Please select a '.hdr' file.")
-        else:
-            print("No file selected")
-            pass
-
-        print(f'loading {self.file} using spectral')
-        self.f_ = envi.open(self.file)
-        print('\tobjects loaded\n')
-        
-        # Use the directory dialog to select an output directory
-        print("Select output directory")
-        self.outdir = filedialog.askdirectory()
-
-        # Check if the user selected a directory
-        if hasattr(self, 'outdir'):
-            print("Selected output directory:", self.outdir)
-        else:
-            print("No output directory selected")
-        
-        # load wave tables and data
-        self.f_bands = [float(b) for b in self.f_.metadata['wavelength']]
-
-        if 'default bands' in self.f_.metadata:
-            self.f_preview_bands = [int(float(b)) for b in self.f_.metadata['default bands']]
-        else:  
-            self.f_preview_bands = [39, 23, 4] #if no default bands are set, grab reasonable bands for preview
-
-        # loading data
-        print('loading data')
-        self.f = np.array(self.f_.load())
-        # flip and transpose as necessary
+    def __init__(
+        self,
+        in_file: str | Path | None = None,
+        crop: Sequence[int] | None = None,
+        bbl: Sequence[int] | None = None,
+        interpNans: bool = False,
+        flip: bool = False,
+        transpose: bool = False,
+        denoise: bool = False,
+        preview: bool = False,
+        outdir: str | Path | None = None,
+        parameters: Sequence[str] | None = None,
+    ) -> None:
+        if bbl is not None and len(bbl) and bbl[0] is None:  # the old default, [None]
+            bbl = None
+        self.file = str(in_file) if in_file is not None else _ask_for_file()
+        if not self.file:
+            raise ValueError("no input file selected")
+        self.outdir = str(outdir) if outdir is not None else _ask_for_directory()
+        logger.info("loading %s", self.file)
+        self.f, self.wvt, self.metadata = read_envi(self.file)
+        if self.wvt is None:
+            raise ValueError(f"{self.file} has no numeric wavelengths")
+        self.f_bands = list(self.wvt)  # nm
         if flip:
             self.f = np.flip(self.f, axis=0)
         if transpose:
-            self.f = np.transpose(self.f, (1,0,2))
-
-        print('\tdata loaded')
+            self.f = np.transpose(self.f, (1, 0, 2))
         if crop is not None:
-            r0,r1,c0,c1 = crop
-            self.f = self.f[r0:r1,c0:c1,:]
-
-        if bbl[0] is not None:
-            print('setting bad bands to NaN')
-            for i, b in enumerate(bbl):
-                if b==0:
-                    self.f[:,:,i] = np.nan
+            r0, r1, c0, c1 = crop
+            self.f = self.f[r0:r1, c0:c1, :]
+        if bbl is not None:
+            self.f = apply_bad_bands(self.f, bbl)
             if interpNans:
-                print('interpolating NaNs')
-                ni = interpNaNs(self.f, self.f_bands)
-                ni.linearInterp()
-                self.f = ni.data_cube
-
+                self.f = fill_nans_along_spectrum(self.f)
         if denoise:
-            print('denoising cube')
-            # ask the user if they would like to set view_votes to true:
-            choice = input('would you like to view the votes?\n\ty or n\n')
-            choice = choice.lower()
-            if choice == 'y':
-                view_votes = True
-            else:
-                view_votes = False
-
-            self.denoiser(view_votes = view_votes)
-
-        self.cube = self.f
-        # remove funky values
-        self.cube = np.where(self.cube>1, np.nan, self.cube)
-        self.cube = np.where(self.cube<-1, np.nan, self.cube)
-        # check if the units are microns or nanometers
-        if self.f_bands[0] <10:
-            # convert to nanometers if in µm
-            self.wvt = [b*1000 for b in self.f_bands]
-        else:
-            self.wvt = self.f_bands
-
-        self.validParams = self.determineValidParams()
-        
-        toc = timeit.default_timer()-tic
-        print(f'{np.round(toc/60,2)} minutes to load data')
-
-        if preview is True: 
+            raise NotImplementedError(
+                "denoise=True is no longer applied here; run hypyrameter.iovf_generic.iovf "
+                "on the cube first (needs the 'denoise' extra)"
+            )
+        self.cube = clamp_reflectance(self.f)
+        self.validParams = (
+            list(parameters) if parameters is not None else valid_parameters(self.wvt)
+        )
+        logger.info("valid parameters: %s", self.validParams)
+        self.params: np.ndarray | None = None
+        if preview:
             self.previewData()
 
-    # -------------------------------------------------------------------------
-    # utilities
-    # -------------------------------------------------------------------------
-    def denoiser(self, view_votes = False):
-        dn = iovf(self.f, '', view_votes=view_votes)
-        dn.run()
-        self.f = dn.flt
-        file_name = self.file.split('/')[-1].split('.')[0]
-        denoised_file_name = self.outdir+'/'+file_name+'_denoised.hdr'
-        meta = self.f_.metadata.copy()
-        try:
-            envi.save_image(denoised_file_name, self.f,
-                            metadata=meta, dtype=np.float32)
-        except EnviException as error:
-            print(error)
-            choice = input('file exists, would you like to overwite?\n\ty or n\n')
-            choice = choice.lower()
-            if choice == 'y':
-                envi.save_image(denoised_file_name, self.f,
-                                metadata=meta, dtype=np.float32, force=True)
-            else:
-                pass
+    def previewData(self) -> None:
+        """Show the header's default bands (or three reasonable ones) with matplotlib."""
+        import matplotlib.pyplot as plt
 
-    def previewData(self):
-        # preview data
-        plt.title('Image Preview')
-        if hasattr(self, 'f_preview_bands'):
-            preview = self.f[:,:,self.f_preview_bands]
+        if "default bands" in self.metadata:
+            bands = [int(float(b)) - 1 for b in self.metadata["default bands"]]
         else:
-            choice = input('type 3 bands to display as a list\n\tlike this [55, 30, 10]')
-            self.f_preview_bands = choice
-            preview = self.f[:,:,self.f_preview_bands]
-        preview = [(r-np.nanmin(r))/(np.nanmax(r)-np.nanmin(r)) for r in preview]
-        plt.imshow(preview)
+            bands = [min(i, self.f.shape[-1] - 1) for i in (39, 23, 4)]
+        preview = self.f[:, :, bands]
+        lo, hi = np.nanmin(preview, axis=(0, 1)), np.nanmax(preview, axis=(0, 1))
+        plt.title("Image Preview")
+        plt.imshow(np.clip((preview - lo) / (hi - lo), 0, 1))
         plt.show()
 
-    def determineValidParams(self):
-        # get wavelength bounds of data
-        b_min = np.min(self.wvt)
-        b_max = np.max(self.wvt)
+    def determineValidParams(self) -> list[str]:
+        return valid_parameters(self.wvt)
 
-        # get wavelength bounds for each parameter...
-        '''We need a better way to only grab the parameters that are valid for the data cube'''
-        paramDict = cubeParamCalculator.__dict__.copy()
-        paramList = list(paramDict)[6:-6]
-        print(f'all parameters:\n\t{paramList}')
-        w_bounds = [paramDict[param](self,check=True) for param in paramList]
+    def calculateParams(self) -> np.ndarray:
+        """(rows, cols, len(validParams)) float32 parameter cube; also kept as ``params``."""
+        self.params = compute(
+            self.cube,
+            self.wvt,
+            self.validParams,
+            progress=lambda fraction, name: logger.info("%3.0f%% %s", 100 * fraction, name),
+        )
+        return self.params
 
-        # check against parameter values
-        validParams = []
-        for bounds, param in zip(w_bounds,paramList):
-            # determine if min bound is valid within a tolerance level
-            tol = 5
-            if bounds[0] > (b_min-tol):
-                min_valid = True
-            else:
-                min_valid = False
-            # determine if max bound is valid
-            if bounds[1] < (b_max + tol):
-                max_valid = True
-            else:
-                max_valid = False
-            
-            # if one is invalid then reject the parameter, otherwise add it to the list
-            if min_valid and max_valid:
-                validParams.append(param)
-        
-        return validParams
-    
-    # should add denoise routine here once it is fixed
-    # -------------------------------------------------------------------------
-            
-    # -------------------------------------------------------------------------
-    # parameter library
-    # -------------------------------------------------------------------------
+    def _parameter_layers(self) -> dict[str, np.ndarray]:
+        if self.params is None:
+            self.calculateParams()
+        return {name: self.params[..., i] for i, name in enumerate(self.validParams)}
 
-    # Reflectance (R) parameters
-    def R463(self, check = False):
-        if check:
-            img = (463,463)
-        elif not check:
-            img = u.getBand(self.f,self.wvt,463)
-        return img
-        
-    def R550(self, check = False):
-        if check:
-            img = (550,550)
-        elif not check:
-            img = u.getBand(self.f,self.wvt,550)
-        return img
-        
-    def R637(self, check = False):
-        if check:
-            img = (637,637)
-        elif not check:
-            img = u.getBand(self.f,self.wvt,637)
-        return img
+    def calculateBrowse(
+        self, stype: str = "mad", perc: float = 2, factor: float = 2.5
+    ) -> list[str]:
+        """Write a PNG per valid browse product into ``outdir``; returns their names."""
+        layers = self._parameter_layers()
+        self.validBrowseProducts = valid_browse_products(layers)
+        write_browse_products(
+            layers, self.outdir, self.validBrowseProducts, kind=stype, percent=perc, factor=factor
+        )
+        return self.validBrowseProducts
 
-    def R1080(self, check = False):
-        if check:
-            img = (1080,1080)
-        elif not check:
-            img = u.getBand(self.f,self.wvt,1080)
-        return img
-    
-    def R1506(self, check = False):
-        if check:
-            img = (1506,1506)
-        elif not check:
-            img = u.getBand(self.f,self.wvt,1506)
-        return img
-    
-    def R2529(self, check = False):
-        if check:
-            img = (2529,2529)
-        elif not check:
-            img = u.getBand(self.f,self.wvt,2529)
-        return img
+    def saveParamCube(self, force: bool = True) -> Path:
+        """Write ``<input name>_params.hdr/.img`` into ``outdir``."""
+        if self.params is None:
+            self.calculateParams()
+        name = Path(self.file).stem + "_params.hdr"
+        return write_envi(
+            Path(self.outdir) / name,
+            self.params,
+            self.validParams,
+            base_metadata=self.metadata,
+            default_bands=["R637", "R550", "R463"],
+            force=force,
+        )
 
-    # Index parameters
-    def HCPINDEX2(self, check = False):
-        if check:
-            img = (1690, 2530)
-        elif not check:
-            # extract data from image cube
-            R2120 = u.getBand(self.cube, self.wvt,2120)
-            R2140 = u.getBand(self.cube, self.wvt,2140)
-            R2230 = u.getBand(self.cube, self.wvt,2230)
-            R2250 = u.getBand(self.cube, self.wvt,2250)
-            R2430 = u.getBand(self.cube, self.wvt,2430)
-            R2460 = u.getBand(self.cube, self.wvt,2460)
-            R2530 = u.getBand(self.cube, self.wvt,2530)
-            R1690 = u.getBand(self.cube, self.wvt,1690)
-        
-            W2120 = u.getClosestWavelength(2120,self.wvt)
-            W2140 = u.getClosestWavelength(2140,self.wvt)
-            W2230 = u.getClosestWavelength(2230,self.wvt)
-            W2250 = u.getClosestWavelength(2250,self.wvt)
-            W2430 = u.getClosestWavelength(2430,self.wvt)
-            W2460 = u.getClosestWavelength(2460,self.wvt)
-            W2530 = u.getClosestWavelength(2530,self.wvt)
-            W1690 = u.getClosestWavelength(1690,self.wvt)
-        
-        
-            # compute the corrected reflectance interpolating 
-            slope = (R2530 - R1690) / (W2530 - W1690)      
-            intercept = R2530 - slope * W2530
-        
-            # weighted sum of relative differences
-            Rc2120 = slope*W2120 + intercept
-            Rc2140 = slope*W2140 + intercept
-            Rc2230 = slope*W2230 + intercept
-            Rc2250 = slope*W2250 + intercept
-            Rc2430 = slope*W2430 + intercept
-            Rc2460 = slope*W2460 + intercept
-        
-            img=((1-(R2120/Rc2120))*0.1) + ((1-(R2140/Rc2140))*0.1) + ((1-(R2230/Rc2230))*0.15) + ((1-(R2250/Rc2250))*0.3) + ((1-(R2430/Rc2430))*0.2) + ((1-(R2460/Rc2460))*0.15)
-            nmin = np.nanmin(np.where(img>-np.inf,img,np.nan))
-            img = np.where(img>-np.inf,img,nmin)
-        return img
-    
-    def LCPINDEX2(self, check = False):
-        if check:
-            img = (1690, 1870)
-        elif not check:
-            # extract data from image cube
-            R1690 = u.getBand(self.cube, self.wvt, 1690)
-            R1750 = u.getBand(self.cube, self.wvt, 1750)
-            R1810 = u.getBand(self.cube, self.wvt, 1810)
-            R1870 = u.getBand(self.cube, self.wvt, 1870)
-            R1560 = u.getBand(self.cube, self.wvt, 1560)
-            R2450 = u.getBand(self.cube, self.wvt, 2450)
-        
-            W1690 = u.getClosestWavelength(1690,self.wvt)
-            W1750 = u.getClosestWavelength(1750,self.wvt)
-            W1810 = u.getClosestWavelength(1810,self.wvt)
-            W1870 = u.getClosestWavelength(1870,self.wvt)
-            W1560 = u.getClosestWavelength(1560,self.wvt)
-            W2450 = u.getClosestWavelength(2450,self.wvt)
-        
-            # compute the corrected reflectance interpolating 
-            slope = (R2450 - R1560)/(W2450 - W1560)
-            intercept = R2450 - slope * W2450
-        
-            # weighted sum of relative differences
-            Rc1690 = slope*W1690 + intercept
-            Rc1750 = slope*W1750 + intercept
-            Rc1810 = slope*W1810 + intercept
-            Rc1870 = slope*W1870 + intercept
-        
-            img=((1-(R1690/Rc1690))*0.2) + ((1-(R1750/Rc1750))*0.2) + ((1-(R1810/Rc1810))*0.3) + ((1-(R1870/Rc1870))*0.3)
-            nmin = np.nanmin(np.where(img>-np.inf,img,np.nan))
-            img = np.where(img>-np.inf,img,nmin)
-        return img
-    
-    def OLINDEX3(self, check = False):
-        if check:
-            img = (1210, 1862)
-        elif not check:
-            # extract data from image cube
-            R1210 = u.getBand(self.cube, self.wvt,1210)
-            R1250 = u.getBand(self.cube, self.wvt,1250)
-            R1263 = u.getBand(self.cube, self.wvt,1263)
-            R1276 = u.getBand(self.cube, self.wvt,1276)
-            R1330 = u.getBand(self.cube, self.wvt,1330)
-            R1750 = u.getBand(self.cube, self.wvt,1750)
-            R1862 = u.getBand(self.cube, self.wvt,1862)
-        
-            # find closest Hyspex wavelength
-            W1210 = u.getClosestWavelength(1210,self.wvt)
-            W1250 = u.getClosestWavelength(1250,self.wvt)
-            W1263 = u.getClosestWavelength(1263,self.wvt)
-            W1276 = u.getClosestWavelength(1276,self.wvt)
-            W1330 = u.getClosestWavelength(1330,self.wvt)
-            W1750 = u.getClosestWavelength(1750,self.wvt)
-            W1862 = u.getClosestWavelength(1862,self.wvt)
-        
-            # ; compute the corrected reflectance interpolating 
-            slope = (R1862 - R1750)/(W1862 - W1750)   #;slope = ( R2120 - R1690 ) / ( W2120 - W1690 )
-            intercept = R1862 - slope*W1862               #;intercept = R2120 - slope * W2120
-        
-            Rc1210 = slope * W1210 + intercept
-            Rc1250 = slope * W1250 + intercept
-            Rc1263 = slope * W1263 + intercept
-            Rc1276 = slope * W1276 + intercept
-            Rc1330 = slope * W1330 + intercept
-        
-            img = (((Rc1210-R1210)/(abs(Rc1210)))*0.1) + (((Rc1250-R1250)/(abs(Rc1250)))*0.1) + (((Rc1263-R1263)/(abs(Rc1263)))*0.2) + (((Rc1276-R1276)/(abs(Rc1276)))*0.2) + (((Rc1330-R1330)/(abs(Rc1330)))*0.4)
-            nmin = np.nanmin(np.where(img>-np.inf,img,np.nan))
-            img = np.where(img>-np.inf,img,nmin)
-        return img
-    
-    def ESINDEX(self, check = False):
-        if check:
-            img = (420, 950)
-        elif not check:
-            pv1 = u.getSlope(self.cube, self.wvt, 420, 500) * 1000.0 #should be high
-            pv2 = np.abs(u.getSlope(self.cube,self.wvt,550, 950) * 1000.0) #should be low, near 0
-            img = pv1 - pv2
-        return img
-
-    def SINDEX2(self, check = False):
-        if check:
-            img = (2120, 2400)
-        elif not check:
-            img = u.getBandDepthInvert(self.cube,self.wvt,2120, 2290, 2400,mw=7,hw=3)
-        return img
-    
-    def GINDEX(self, check = False):
-        if check:
-            img = (1440, 1570)
-        elif not check:
-            t1 = u.getBandDepth(self.cube,self.wvt,1440,1447,1476, lw=1, mw=1, hw=1)
-            t2 = u.getBandDepth(self.cube,self.wvt,1476,1491,1515, lw=1, mw=1, hw=1)
-            t3 = u.getBandDepth(self.cube,self.wvt,1515,1540,1570, lw=1, mw=1, hw=1)
-            b = np.dstack((t1,t2,t3))
-            img = np.nanmin(b,axis=2)
-        return img
-    
-    def CPLINDEX(self, check = False):
-        if check:
-            img = (600, 710)
-        elif not check:
-            b1 = u.getBandDepth(self.cube,self.wvt,600, 626, 646)
-            b2 = u.getBandDepth(self.cube,self.wvt,646, 678, 710)
-            b = np.dstack((b1,b2))
-            img = np.nanmin(b,axis=2)
-        return img
-    
-    def CHLORINDEX(self, check = False):
-        '''chlorite index'''
-        if check:
-            img = (1800, 2450)
-        elif not check:
-            bd2347 = u.getBandDepth(self.cube,self.wvt,2286, 2347, 2408)
-            bd2254 = u.getBandDepth(self.cube,self.wvt,2184, 2254, 2279)
-            bd2000 = u.getBandDepth(self.cube,self.wvt,1986, 2000, 2030)
-            bd1921 = u.getBandDepth(self.cube,self.wvt,1888, 1921, 1962)
-            th2105 = u.getBandDepthInvert(self.cube,self.wvt,2000, 2105, 2257)
-            # change shapes to (row, column band)
-            bd2347 = np.expand_dims(bd2347, axis=2)
-            bd2254 = np.expand_dims(bd2254, axis=2)
-            bd2000 = np.expand_dims(bd2000, axis=2)
-            bd1921 = np.expand_dims(bd1921, axis=2)
-            th2105 = np.expand_dims(th2105, axis=2)
-            weights = np.array((0.25, 0.25, 0.25, 0.25, 0.05))
-            weights = list(weights / weights.sum())
-            img = np.nansum(bd2347 * weights[0] + bd2254 * weights[1] + bd2000 * weights[2] + bd1921 * weights[3] + th2105 * weights[4], axis=2)
-            img -= self.BD2210_2()
-            nmin = np.nanmin(np.where(img>-np.inf,img,np.nan))
-            img = np.where(img>-np.inf,img,nmin)
-            img = img.squeeze()
-
-        return img
-    
-    # -----------------------------------------------------------------------------------------------
-    # Band Depth (BD) Parameters
-    def BD530_2(self, check = False):
-        if check:
-            img = (440, 614)
-        elif not check:
-            img = u.getBandDepth(self.cube, self.wvt, 440, 530, 614)
-        return img
-    
-    def BD670(self, check = False):
-        if check:
-            img = (620, 745)
-        elif not check:
-            # this is a custom parameter
-            img = u.getBandDepth(self.cube, self.wvt, 620, 670, 745)
-        return img
-    
-    def BD875(self, check = False):
-        if check:
-            img = (747, 980)
-        elif not check:
-            # this is a custom parameter
-            img = u.getBandDepth(self.cube, self.wvt, 747, 875, 980)
-        return img
-    
-    def BD905(self, check = False):
-        if check:
-            img = (750, 1300)
-        elif not check:
-            img = u.getBandDepth(self.cube,self.wvt,750,905,1300)
-        return img
-    
-    def BD920_2(self, check = False):
-        if check:
-            img = (807, 984)
-        elif not check:
-            img = u.getBandDepth(self.cube,self.wvt,807,920,984)
-        return img
-    
-    def BD1200(self, check = False):
-        if check:
-            img = (1115, 1260)
-        elif not check:
-            img = u.getBandDepth(self.cube, self.wvt, 1115, 1200, 1260)
-        return img
-    
-    def BD1300(self, check = False):
-        if check:
-            img = (1080, 1750)
-        elif not check:
-            img = u.getBandDepth(self.cube, self.wvt, 1260, 1320, 1750, mw=15)
-        return img
-    
-    def BD1400(self, check = False):
-        if check:
-            img = (1330, 1467)
-        elif not check:
-            img = u.getBandDepth(self.cube, self.wvt, 1330, 1395, 1467, mw=3)
-        return img
-    
-    def BD1450(self, check = False):
-        if check:
-            img = (1340, 1535)
-        elif not check:
-            img = u.getBandDepth(self.cube, self.wvt, 1340, 1450, 1535, mw=3)
-        return img
-    
-    def BD1750(self, check = False):
-        if check:
-            img = (1688, 1820)
-        elif not check:
-            img = u.getBandDepth(self.cube, self.wvt, 1688, 1750, 1820)
-        return img
-    
-    def BD1900_2(self, check = False):
-        if check:
-            img = (1850, 2067)
-        elif not check:
-            img = u.getBandDepth(self.cube,self.wvt,1850, 1930, 2067)
-        return img
-    
-    def BD1900r2(self, check = False):
-        if check:
-            img = (1908, 2132)
-        elif not check:
-            # img = u.getBandArea(self.cube, self.wvt, 1800, 2000)
-            # extract individual channels, replacing CRISM_NANs with IEEE_NaNs
-            R1908 = u.getBand(self.cube,self.wvt,1908, kwidth = 1) 
-            R1914 = u.getBand(self.cube,self.wvt,1914, kwidth = 1) 
-            R1921 = u.getBand(self.cube,self.wvt,1921, kwidth = 1) 
-            R1928 = u.getBand(self.cube,self.wvt,1928, kwidth = 1) 
-            R1934 = u.getBand(self.cube,self.wvt,1934, kwidth = 1) 
-            R1941 = u.getBand(self.cube,self.wvt,1941, kwidth = 1) 
-            R1862 = u.getBand(self.cube,self.wvt,1862, kwidth = 1) 
-            R1869 = u.getBand(self.cube,self.wvt,1869, kwidth = 1) 
-            R1875 = u.getBand(self.cube,self.wvt,1875, kwidth = 1) 
-            R2112 = u.getBand(self.cube,self.wvt,2112, kwidth = 1) 
-            R2120 = u.getBand(self.cube,self.wvt,2120, kwidth = 1) 
-            R2126 = u.getBand(self.cube,self.wvt,2126, kwidth = 1) 
-            
-            R1815 = u.getBand(self.cube, self.wvt, 1815);
-            R2132 = u.getBand(self.cube, self.wvt, 2132); 
-            
-            # retrieve the CRISM wavelengths nearest the requested values
-            W1908 = u.getClosestWavelength(1908, self.wvt)
-            W1914 = u.getClosestWavelength(1914, self.wvt)
-            W1921 = u.getClosestWavelength(1921, self.wvt)
-            W1928 = u.getClosestWavelength(1928, self.wvt)
-            W1934 = u.getClosestWavelength(1934, self.wvt)
-            W1941 = u.getClosestWavelength(1941, self.wvt)
-            W1862 = u.getClosestWavelength(1862, self.wvt)#
-            W1869 = u.getClosestWavelength(1869, self.wvt)
-            W1875 = u.getClosestWavelength(1875, self.wvt)
-            W2112 = u.getClosestWavelength(2112, self.wvt)
-            W2120 = u.getClosestWavelength(2120, self.wvt)
-            W2126 = u.getClosestWavelength(2126, self.wvt)
-            W1815 = u.getClosestWavelength(1815, self.wvt)#  
-            W2132 = u.getClosestWavelength(2132, self.wvt) 
-            
-            # compute the interpolated continuum values at selected wavelengths between 1815 and 2530
-            slope = (R2132 - R1815)/(W2132 - W1815)
-            CR1908 = R1815 + slope *(W1908 - W1815)
-            CR1914 = R1815 + slope *(W1914 - W1815)
-            CR1921 = R1815 + slope *(W1921 - W1815) 
-            CR1928 = R1815 + slope *(W1928 - W1815)
-            CR1934 = R1815 + slope *(W1934 - W1815)
-            CR1941 = R1815 + slope *(W1941 - W1815) 
-            
-            CR1862 = R1815 + slope*(W1862 - W1815)
-            CR1869 = R1815 + slope*(W1869 - W1815)
-            CR1875 = R1815 + slope*(W1875 - W1815)    
-            CR2112 = R1815 + slope*(W2112 - W1815)
-            CR2120 = R1815 + slope*(W2120 - W1815)
-            CR2126 = R1815 + slope*(W2126 - W1815)
-            img= 1.0-((R1908/CR1908+R1914/CR1914+R1921/CR1921+R1928/CR1928+R1934/CR1934+R1941/CR1941)/(R1862/CR1862+R1869/CR1869+R1875/CR1875+R2112/CR2112+R2120/CR2120+R2126/CR2126))
-            nmin = np.nanmin(np.where(img>-np.inf,img,np.nan))
-            img = np.where(img>-np.inf,img,nmin)
-        return img
-
-    def BD2100_2(self, check = False):
-        if check:
-            img = (1930, 2250)
-        elif not check:
-            img = u.getBandDepth(self.cube,self.wvt,1930, 2132, 2250,lw=3,hw=3)
-        return img
-    
-    def BD2100_3(self, check = False):
-        if check:
-            img = (2016, 2220)
-        elif not check:
-            img = u.getBandDepth(self.cube, self.wvt, 2016, 2100, 2220)
-        return img
-    
-    def BD2165(self, check = False):
-        if check:
-            img = (2120, 2230)
-        elif not check:
-            img = u.getBandDepth(self.cube,self.wvt,2120,2165,2230,mw=3,hw=3) #(kaolinite group)
-        return img
-    
-    def BD2190(self, check = False):
-        if check:
-            img = (2120, 2250)
-        elif not check:
-            img = u.getBandDepth(self.cube,self.wvt,2120,2185,2250,mw=3,hw=3) #(Beidellite, Allophane)
-        return img
-    
-    def BD2210_2(self, check = False):
-        if check:
-            img = (2165, 2290)
-        elif not check:
-            img = u.getBandDepth(self.cube,self.wvt,2165,2210,2290) #(kaolinite group)
-        return img
-    
-    def BD2250(self, check = False):
-        if check:
-            img = (2120, 2340)
-        elif not check:
-            img = u.getBandDepth(self.cube,self.wvt,2120, 2245, 2340,mw=7,hw=3) 
-        return img
-    
-    def BD2265(self, check = False):
-        if check:
-            img = (2120, 2340)
-        elif not check:
-            img = u.getBandDepth(self.cube,self.wvt,2120, 2265, 2340, mw=3,hw=5) 
-        return img
-    
-    def BD2290(self, check = False):
-        if check:
-            img = (2250, 2350)
-        elif not check:
-            img = u.getBandDepth(self.cube,self.wvt,2250, 2290, 2350) #(fe/mg phyllo group)
-        return img
-    
-    def BD2443(self, check = False):
-        if check:
-            img = (2320, 2480)
-        elif not check:
-            img = u.getBandDepth(self.cube,self.wvt,2320, 2443, 2480) #(nitrate)
-        return img
-    
-    def BD2355(self, check = False):
-        if check:
-            img = (2300, 2450)
-        elif not check:
-            img = u.getBandDepth(self.cube,self.wvt,2300, 2355, 2450) #(fe/mg phyllo group)
-        return img  
-    
-    def BD2600(self, check = False):
-        if check:
-            img = (2530, 2630)
-        elif not check:
-            img = u.getBandDepth(self.cube,self.wvt,2530, 2600, 2630) #(2.6 µm H2O)
-        return img  
-      
-    def BDCARB(self, check = False):
-        if check:
-            img = (2230, 2600)
-        elif not check:
-            # alternative formulation
-            # b1 = u.getBandDepth(self.cube,self.wvt,2220,2375)
-            # b2 = u.getBandDepth(self.cube,self.wvt,2400,2500)
-            # img = b1+b2
-
-            # extract channels, replacing CRISM_NAN with IEEE NAN
-            R2230 = u.getBand(self.cube, self.wvt, 2230)
-            R2320 = u.getBand(self.cube, self.wvt, 2320)
-            R2330 = u.getBand(self.cube, self.wvt, 2330)
-            R2390 = u.getBand(self.cube, self.wvt, 2390)
-            R2520 = u.getBand(self.cube, self.wvt, 2520)
-            R2530 = u.getBand(self.cube, self.wvt, 2530)
-            R2600 = u.getBand(self.cube, self.wvt, 2600)
-        
-            # identify nearest wavelengths
-            WL1 = u.getClosestWavelength(2230,self.wvt)
-            WC1 = (u.getClosestWavelength(2330,self.wvt)+u.getClosestWavelength(2320,self.wvt))*0.5
-            WH1 = u.getClosestWavelength(2390,self.wvt)
-            a =  (WC1 - WL1)/(WH1 - WL1)  # a gets multipled by the longer (higher wvln)  band
-            b = 1.0-a                     # b gets multiplied by the shorter (lower wvln) band
-        
-            WL2 =  u.getClosestWavelength(2390,self.wvt)
-            WC2 = (u.getClosestWavelength(2530,self.wvt) + u.getClosestWavelength(2520,self.wvt))*0.5
-            WH2 =  u.getClosestWavelength(2600,self.wvt)
-            c = (WC2 - WL2)/(WH2 - WL2)   # c gets multipled by the longer (higher wvln)  band
-            d = 1.0-c                           # d gets multiplied by the shorter (lower wvln) band
-        
-            # compute bdcarb
-            img = 1.0 - (np.sqrt((((R2320 + R2330)*0.5)/(b*R2230 + a*R2390))*(((R2520 + R2530)*0.5)/(d*R2390 + c*R2600))))
-            nmin = np.nanmin(np.where(img>-np.inf,img,np.nan))
-            img = np.where(img>-np.inf,img,nmin)
-        return img
-    
-# -----------------------------------------------------------------------------------------------
-# Band Area (BA) parameters
-    def BA1200(self, check = False):
-        if check:
-            img = (1115, 1260)
-        elif not check:
-            img = u.getBandArea(self.cube, self.wvt, 1115, 1260)
-        return img
-    
-    def BA1450(self, check = False):
-        if check:
-            img = (1340, 1535)
-        elif not check:
-            img = u.getBandArea(self.cube, self.wvt, 1340, 1535)
-        return img
-    
-    def BA1900(self, check = False):
-        if check:
-            img = (1850, 2067)
-        elif not check:
-            img = u.getBandArea(self.cube, self.wvt, 1850, 2067)
-        return img
-    
-# -----------------------------------------------------------------------------------------------
-# Depth (D and shoulder) parameters
-    def SH460(self, check = False):
-        if check:
-            img = (420, 520)
-        elif not check:
-            img = u.getBandDepthInvert(self.cube, self.wvt, 420, 460, 520)
-        return img
-    
-    def D700(self, check = False):
-        if check:
-            img = (630, 830)
-        elif not check:
-            # a custom parameter for chlorophyll
-            # extract individual channels
-            R630 = u.getBand(self.cube,self.wvt,630)
-            R740 = u.getBand(self.cube,self.wvt,740)
-            R760 = u.getBand(self.cube,self.wvt,760)
-            R770 = u.getBand(self.cube,self.wvt,770)
-            R690 = u.getBand(self.cube,self.wvt,690,kwidth=3)
-            R710 = u.getBand(self.cube,self.wvt,710,kwidth=3)
-            R720 = u.getBand(self.cube,self.wvt,720,kwidth=3)
-            R830 = u.getBand(self.cube,self.wvt,830)
-            
-            # get closestgetClosestWavelengthngth
-            W630 = u.getClosestWavelength(630,self.wvt)
-            W740 = u.getClosestWavelength(740,self.wvt)
-            W760 = u.getClosestWavelength(760,self.wvt)
-            W770 = u.getClosestWavelength(770,self.wvt)
-            W690 = u.getClosestWavelength(690,self.wvt)
-            W710 = u.getClosestWavelength(710,self.wvt)
-            W720 = u.getClosestWavelength(720,self.wvt)
-            W830 = u.getClosestWavelength(830,self.wvt)
-            
-            # compute the interpolated continuum values at selected wavelengths between 630 and 830
-            slope= (R830 - R630)/(W830 - W630)
-            CR690 = R630 + slope*(W690 - W630)
-            CR710 = R630 + slope*(W710 - W630)
-            CR720 = R630 + slope*(W720 - W630)
-            CR740 = R630 + slope*(W740 - W630)
-            CR760 = R630 + slope*(W760 - W630)
-            CR770 = R630 + slope*(W770 - W630)
-        
-            # compute d700 
-            img = 1 - (((R690/CR690) + (R710/CR710) + (R720/CR720))/((R740/CR740) + (R760/CR760) + (R770/CR770)))
-            nmin = np.nanmin(np.where(img>-np.inf,img,np.nan))
-            img = np.where(img>-np.inf,img,nmin) 
-        return img
-    
-    def D2200(self, check = False):
-        if check:
-            img = (1815, 2430)
-        elif not check:
-            # extract individual channels
-            R1815 = u.getBand(self.cube, self.wvt,1815, kwidth=5)
-            R2165 = u.getBand(self.cube, self.wvt,2165)
-            R2210 = u.getBand(self.cube, self.wvt,2210, kwidth=5)
-            R2230 = u.getBand(self.cube, self.wvt,2230, kwidth=5)
-            R2430 = u.getBand(self.cube, self.wvt,2430, kwidth=5)
-        
-        
-            # retrieve wavelengths nearest the requested values
-            W1815 = u.getClosestWavelength(1815, self.wvt)
-            W2165 = u.getClosestWavelength(2165, self.wvt) 
-            W2210 = u.getClosestWavelength(2210, self.wvt)
-            W2230 = u.getClosestWavelength(2230, self.wvt)
-            W2430 = u.getClosestWavelength(2430, self.wvt)
-            
-            # compute the interpolated continuum values at selected wavelengths between 1815 and 2430
-            slope = (R2430 - R1815)/(W2430 - W1815)
-            CR2165 = R1815 + slope*(W2165 - W1815)    
-            CR2210 = R1815 + slope*(W2210 - W1815)
-            CR2230 = R1815 + slope*(W2230 - W1815)
-        
-            # compute d2200 with IEEE NaN values
-            img = 1 - (((R2210/CR2210) + (R2230/CR2230))/(2*(R2165/CR2165)))
-            nmin = np.nanmin(np.where(img>-np.inf,img,np.nan))
-            img = np.where(img>-np.inf,img,nmin)
-        return img
-    
-    def D2300(self, check = False):
-        if check:
-            img = (1815, 2530)
-        elif not check:
-            # extract individual channels
-            R1815 = u.getBand(self.cube,self.wvt,1815)
-            R2120 = u.getBand(self.cube,self.wvt,2120)
-            R2170 = u.getBand(self.cube,self.wvt,2170)
-            R2210 = u.getBand(self.cube,self.wvt,2210)
-            R2290 = u.getBand(self.cube,self.wvt,2290,kwidth=3)
-            R2320 = u.getBand(self.cube,self.wvt,2320,kwidth=3)
-            R2330 = u.getBand(self.cube,self.wvt,2330,kwidth=3)
-            R2530 = u.getBand(self.cube,self.wvt,2530)
-            
-            # retrieve wavelengths nearest the requested values
-            W1815 = u.getClosestWavelength(1815,self.wvt)
-            W2120 = u.getClosestWavelength(2120,self.wvt)
-            W2170 = u.getClosestWavelength(2170,self.wvt)
-            W2210 = u.getClosestWavelength(2210,self.wvt)
-            W2290 = u.getClosestWavelength(2290,self.wvt)
-            W2320 = u.getClosestWavelength(2320,self.wvt)
-            W2330 = u.getClosestWavelength(2330,self.wvt)
-            W2530 = u.getClosestWavelength(2530,self.wvt)
-            
-            # compute the interpolated continuum values at selected wavelengths between 1815 and 2530
-            slope = (R2530 - R1815)/(W2530 - W1815)
-            CR2120 = R1815 + slope*(W2120 - W1815)
-            CR2170 = R1815 + slope*(W2170 - W1815)
-            CR2210 = R1815 + slope*(W2210 - W1815)
-            CR2290 = R1815 + slope*(W2290 - W1815)
-            CR2320 = R1815 + slope*(W2320 - W1815)
-            CR2330 = R1815 + slope*(W2330 - W1815)
-        
-            # compute d2300 with IEEE NaN values
-            img = 1 - (((R2290/CR2290) + (R2320/CR2320) + (R2330/CR2330))/((R2120/CR2120) + (R2170/CR2170) + (R2210/CR2210)))
-            nmin = np.nanmin(np.where(img>-np.inf,img,np.nan))
-            img = np.where(img>-np.inf,img,nmin) 
-        return img
-    
-# -----------------------------------------------------------------------------------------------
-# Minimum (MIN) parameters
-    def MIN2295_2480(self, check = False):
-        if check:
-            img = (2165, 2570)
-        elif not check:
-            img1 = u.getBandDepth(self.cube, self.wvt,2165,2295,2364)
-            img2 = u.getBandDepth(self.cube,self.wvt,2364,2480,2570)
-            img3 = np.empty((np.shape(img1)[0],np.shape(img1)[1],2))
-            img3[:,:,0] = img1
-            img3[:,:,1] = img2
-            img = np.min(img3,axis=2)
-            nmin = np.nanmin(np.where(img>-np.inf,img,np.nan))
-            img = np.where(img>-np.inf,img,nmin)
-        return img
-    
-    def MIN2250(self, check = False):
-        if check:
-            img = (2165, 2350)
-        elif not check:
-            img1 = u.getBandDepth(self.cube, self.wvt,2165, 2210, 2350)
-            img2 = u.getBandDepth(self.cube,self.wvt,2165, 2265, 2350)
-            img3 = np.empty((np.shape(img1)[0],np.shape(img1)[1],2))
-            img3[:,:,0] = img1
-            img3[:,:,1] = img2
-            img = np.min(img3,axis=2)
-            nmin = np.nanmin(np.where(img>-np.inf,img,np.nan))
-            img = np.where(img>-np.inf,img,nmin)
-        return img
-    
-    def MIN2345_2537(self, check = False):
-        if check:
-            img = (2250, 2602)
-        elif not check:
-            img1 = u.getBandDepth(self.cube, self.wvt,2250, 2345, 2430)
-            img2 = u.getBandDepth(self.cube,self.wvt,2430, 2537, 2602)
-            img3 = np.empty((np.shape(img1)[0],np.shape(img1)[1],2))
-            img3[:,:,0] = img1
-            img3[:,:,1] = img2
-            img = np.min(img3,axis=2)
-            nmin = np.nanmin(np.where(img>-np.inf,img,np.nan))
-            img = np.where(img>-np.inf,img,nmin)
-        return img
-    
-# -----------------------------------------------------------------------------------------------
-# All other parameters (ratios, slopes, peaks)
-    def BH1500(self, check = False):
-        if check:
-            img = (1250, 1750)
-        elif not check:
-            img = u.getBandDepthInvert(self.cube, self.wvt, 1250, 1510, 1750)
-        return img
-    
-    def RPEAK1(self, check = False):
-        if check:
-            img = (442, 989)
-        elif not check:
-            # old, but functional, RPEAK1
-            rp_wv = [442,533,600,710,740,775,800,833,860,892,925,963,989]
-            rp_i = [self.wvt.index(u.getClosestWavelength(i,self.wvt)) for i in rp_wv]
-            rp_w = [u.getClosestWavelength(i,self.wvt) for i in rp_wv]
-            rp_ = self.cube[:,:,rp_i]
-            x_ = np.linspace(rp_w[0],rp_w[-1],num=521)
-            flatShape=(np.shape(rp_)[0]*np.shape(rp_)[1],np.shape(rp_)[2])       
-            rp_l = np.zeros(flatShape[0])#[]#np.empty(flatShape[0])
-            rp_r = np.zeros(flatShape[0])#[]#np.empty(flatShape[0])
-            rp_flat = np.reshape(rp_,flatShape)
-            is_finite_non_zero = np.logical_and(np.isfinite(rp_flat), rp_flat != 0.0)
-            goodIndeces = np.where(is_finite_non_zero)
-            goodIndx = np.unique(goodIndeces[0])
-            poly=[]
-            print('\tpreparing polynomial arguments')
-            # parallel attempt
-            args = [(rp_w,rp_flat[i,:],5) for i in tqdm(goodIndx)]
-            print('\n\tcalculating polynomials')
-            with mp.Pool(6) as pool:
-                for p in pool.imap(u.getPoly,args):
-                    poly.append(p)
-                
-            print('\treturning peak reflectance and wavelengths of peak reflectance')
-            for j,i in tqdm(enumerate(goodIndx)):
-                rp_l[i] = x_[list(poly[j](x_)).index(np.nanmax(poly[j](x_)))]/1000 
-                rp_r[i] = np.nanmax(poly[j](x_)) 
-            
-            print('\tre-shaping arrays')
-            shape2d = (np.shape(rp_)[0],np.shape(rp_)[1])
-            rp_l=np.reshape(rp_l,shape2d)
-            rp_r=np.reshape(rp_r,shape2d)
-            self.rpeak_reflectance = rp_r
-            img = rp_l
-        return img
-    
-    def RPEAK1_2(self, check = False):
-        if check:
-            img = (500, 1150)
-        elif not check:
-            from scipy.signal import savgol_filter
-            from scipy.interpolate import UnivariateSpline
-
-            # new RPEAK1, smooth data first
-            wvt_array = np.array(self.wvt)
-            wvl_mask = (wvt_array >= 500) & (wvt_array <= 1150)
-            rp_wv = wvt_array[wvl_mask]
-            rp_i = [self.wvt.index(u.getClosestWavelength(i,self.wvt)) for i in rp_wv]
-            rp_w = [u.getClosestWavelength(i,self.wvt) for i in rp_wv]
-            rp_ = self.cube[:,:,rp_i]
-            print(rp_.shape)
-            x_ = np.linspace(rp_w[0],rp_w[-1],num=521)
-            flatShape=(np.shape(rp_)[0]*np.shape(rp_)[1],np.shape(rp_)[2])       
-            rp_l = np.zeros(flatShape[0]) #[]#np.empty(flatShape[0]) #np.zeros(flatShape[0])
-            rp_r = np.zeros(flatShape[0]) #[]#np.empty(flatShape[0]) #np.zeros(flatShape[0])
-            rp_flat = np.reshape(rp_,flatShape)
-            is_finite_non_zero = np.logical_and(np.isfinite(rp_flat), rp_flat != 0.0)
-            goodIndeces = np.where(is_finite_non_zero)
-            goodIndx = np.unique(goodIndeces[0])
-            
-            print('\tcalculating smoothed univariate splines')
-            args = [(rp_w, rp_flat[i,:]) for i in tqdm(goodIndx)]
-            print('\n\tcalculating rpeak1_2 from smoothed univariate splines')
-            lr_results = []
-            with mp.Pool(6) as pool:
-                for l, r in pool.imap(u.getSmoothRpeak, args):
-                    lr_results.append((l, r))
-                    # rp_l.append(l)
-                    # rp_r.append(r)
-            for j, i in tqdm(enumerate(goodIndx)):
-                rp_l[i] = lr_results[j][0]
-                rp_r[i] = lr_results[j][1]
-            # poly=[]
-            # print('\tpreparing polynomial arguments')
-            # # parallel attempt
-            # args = [(rp_w,rp_flat[i,:],5) for i in tqdm(goodIndx)]
-            # print('\n\tcalculating polynomials')
-            # with mp.Pool(6) as pool:
-            #     for p in pool.imap(u.getPoly,args):
-            #         poly.append(p)
-                
-            # print('\treturning peak reflectance and wavelengths of peak reflectance')
-            # for j,i in tqdm(enumerate(goodIndx)):
-            #     rp_l[i] = x_[list(poly[j](x_)).index(np.nanmax(poly[j](x_)))]/1000 
-            #     rp_r[i] = np.nanmax(poly[j](x_)) 
-            
-            print('\tre-shaping arrays')
-            shape2d = (np.shape(rp_)[0],np.shape(rp_)[1])
-            rp_l=np.reshape(rp_l,shape2d)
-            rp_r=np.reshape(rp_r,shape2d)
-            self.rpeak_reflectance = rp_r
-            img = rp_l
-        return img
-    
-    def BDI1000VIS(self, rp_r=None, check = False):
-        if check:
-            img = (833, 989)
-        elif not check:
-            if rp_r is None:
-                rp_l = self.RPEAK1()
-                rp_r = self.rpeak_reflectance
-                
-            # multispectral version
-            # bdi_wv = [833,860,892,925,951,984,989] 
-            # vi = [self.wvt.index(u.getClosestWavelength(i,self.wvt)) for i in bdi_wv]
-            # wv_um = [u.getClosestWavelength(i,self.wvt)/1000 for i in bdi_wv]
-            # wv_ = np.linspace(wv_um[0],wv_um[-1],num=201)
-            
-            vi0 = self.wvt.index(u.getClosestWavelength(833,self.wvt))
-            vi1 = self.wvt.index(u.getClosestWavelength(989,self.wvt))
-            n = vi1-vi0 + 1
-            vi = np.linspace(vi0,vi1,n,dtype=int)
-            wv_um = [self.wvt[i]/1000 for i in vi]
-            bdi1000_cube = self.cube[:,:,vi]
-            bdi_norm = np.empty(np.shape(bdi1000_cube))
-            print('\tnormalizing input data')
-            for b in tqdm(range(len(vi))):
-                bdi_norm[:,:,b] = bdi1000_cube[:,:,b]/rp_r
-            
-            flatShape=(np.shape(bdi_norm)[0]*np.shape(bdi_norm)[1],np.shape(bdi_norm)[2])       
-            bdi1000vis_value = np.zeros(flatShape[0])
-            bdi_norm_flat = np.reshape(bdi_norm,flatShape)
-            args = []
-            bdi1000vis_value = []
-            print('\tpreparing polynomial arguments')
-            for i in tqdm(range(flatShape[0])):
-                spec_vec = bdi_norm_flat[i,:]
-                keepIndx = np.where(~np.isnan(spec_vec))[0]
-                wv_um_ = [wv_um[q] for q in keepIndx]
-                spec_vec_ = [spec_vec[q] for q in keepIndx]
-                if not spec_vec_: 
-                    spec_vec_ = np.linspace(0, len(wv_um), len(wv_um))
-                    wv_um_ = wv_um
-                args.append((wv_um_,spec_vec_, 4))
-            print('\treturning integrated polynomial values')
-            with mp.Pool(6) as pool:
-                for integ in pool.imap(u.getPolyInt,args):
-                        bdi1000vis_value.append(integ)
-            
-            print('\treshaping array')
-            bdi1000vis_value = np.reshape(bdi1000vis_value,(np.shape(bdi_norm)[0],np.shape(bdi_norm)[1]))
-            img = bdi1000vis_value
-
-        return img
-
-    def SLOPE420_500(self, check = False):
-        # values >5 indicative of elemental sulfur
-        if check:
-            img = (420, 500)
-        elif not check:
-            img = u.getSlope(self.cube, self.wvt, 420, 500) * 1000.0
-        return img
-
-    def SLOPE1815_2530(self, check = False):
-        if check:
-            img = (1815, 2530)
-        elif not check:
-            # # extract individual bands
-            # R1815 = u.getBand(self.cube, self.wvt, 1815)
-            # R2530 = u.getBand(self.cube, self.wvt, 2530)
-        
-            # W1815 = u.getClosestWavelength(1815,self.wvt)
-            # W2530 = u.getClosestWavelength(2530,self.wvt)
-        
-            # # want in units of reflectance / um
-            # img = 1000.0 * ( R1815 - R2530 )/ ( W2530 - W1815 )
-            # nmin = np.nanmin(np.where(img>-np.inf,img,np.nan))
-            # img = np.where(img>-np.inf,img,nmin)
-            img = u.getSlope(self.cube, self.wvt, 1815, 2530) * 1000.0
-        return img
-    
-    def BR800(self, check = False):
-        if check:
-            img = (800, 997)
-        elif not check:
-            img = u.getBandRatio(self.cube, self.wvt, 800, 997)
-        return img
-    
-    def BR2530(self, check = False):
-        if check:
-            img = (2210, 2530)
-        elif not check:
-            img = u.getBandRatio(self.cube, self.wvt, 2530, 2210)
-        return img
-    
-    def BR3500(self, check = False):
-        if check:
-            img = (3390, 3500)
-        elif not check:
-            img = u.getBandRatio(self.cube, self.wvt, 3500, 3390)
-        return img
-    
-# -------------------------------------------------------------------------
-# normalized difference indeces
-    def NDVI(self, check = False):
-        if check:
-            img = (665, 833)
-        elif not check:
-            img = u.getNDI(self.cube, self.wvt, 833, 665)
-        return img
-    
-    def NDWI(self, check = False):
-        if check:
-            img = (560, 833)
-        elif not check:
-            img = u.getNDI(self.cube, self.wvt, 560, 833)
-        return img
-    
-    def NDMI(self, check = False):
-        if check:
-            img = (833, 1670)
-        elif not check:
-            img = u.getNDI(self.cube, self.wvt, 833, 1670)
-        return img
-    
-    # -------------------------------------------------------------------------
-    # Run Parameter calculations
-    # -------------------------------------------------------------------------
-    def calculateParams(self):
-        tic = timeit.default_timer()
-        # loop through paramList, add result to a tuple. keep track of valid parameters
-        paramDict = cubeParamCalculator.__dict__.copy()
-        intermediate_list = []
-        for param in self.validParams:
-            print(f'calculating: {param}')
-            if param == 'BDI1000VIS' and 'RPEAK1' in self.validParams:
-                intermediate_list.append(paramDict[param](self, rp_r=self.rpeak_reflectance))
-            else:
-                intermediate_list.append(paramDict[param](self))
-
-        p_tuple = tuple(intermediate_list)
-
-        img = np.dstack(p_tuple)
-        toc = timeit.default_timer()-tic
-        print(f'calculation took {round(toc/60,2)} minutes')
-        return img
-    
-    def calculateBrowse(self, stype = 'mad', perc = 2, factor = 2.5):
-        file_path = str(importlib_resources.files('hypyrameter').joinpath('bin/browseDefinitions.xlsx'))
-        bf = pd.read_excel(file_path)
-        # get valid browse products
-        # Filter the DataFrame of browse products based on valid parameters
-        filtered_bf = bf[bf['Param1'].isin(self.validParams) & bf['Param2'].isin(self.validParams) & bf['Param3'].isin(self.validParams)]
-        # Get the list of BrowseProducts where all three parameters appear
-        self.validBrowseProducts = filtered_bf['BrowseProduct'].tolist()
-        print(f'valid browse products:\n{self.validBrowseProducts}')
-        # calculate valid browse products
-        for bp in self.validBrowseProducts:
-            # Retrieve the parameters for the current browse product
-            parameters = bf.loc[bf['BrowseProduct'] == bp, ['Param1', 'Param2', 'Param3']].values[0]
-            i0 = self.validParams.index(parameters[0])
-            i1 = self.validParams.index(parameters[1])
-            i2 = self.validParams.index(parameters[2])
-            browseProduct = u.buildSummary(self.params[:,:,i0], self.params[:,:,i1], self.params[:,:,i2])
-            # browseProduct = np.flip(u.browse2bit(u.stretchNBands(u.cropNZeros(browseProduct),stype=stype, perc=perc, factor=factor)),axis=2)
-            browseProduct = np.flip(u.browse2bit(u.stretchNBands(browseProduct,stype=stype, perc=perc, factor=factor)),axis=2)
-            n = '/' + bp + '.png'
-            cv2.imwrite(self.outdir+n, browseProduct)
-    
-    def saveParamCube(self):
-        file_name = self.file.split('/')[-1].split('.')[0]
-        params_file_name = self.outdir+'/'+file_name+'_params.hdr'
-        meta = self.f_.metadata.copy()
-        meta['wavelength'] = self.validParams
-        meta['band names'] = self.validParams
-        meta['wavelength units'] = 'parameters'
-        meta['default bands'] = ['R637', 'R550', 'R463']
-        try:
-            envi.save_image(params_file_name, self.params,
-                            metadata=meta, dtype=np.float32)
-        except EnviException as error:
-            print(error)
-            choice = input('file exists, would you like to overwite?\n\ty or n\n')
-            choice = choice.lower()
-            if choice == 'y':
-                envi.save_image(params_file_name, self.params,
-                                metadata=meta, dtype=np.float32, force=True)
-            else:
-                pass
-    
-    def run(self):
-        print(f'calculating valid parameters\n{self.validParams}')
-        self.params = self.calculateParams()
+    def run(self) -> np.ndarray:
+        """Compute, save the parameter cube and write the browse products."""
+        Path(self.outdir).mkdir(parents=True, exist_ok=True)
+        self.calculateParams()
         self.saveParamCube()
-        print(f'calculating valid browse products\n')
         self.browseProducts = self.calculateBrowse()
-        
+        return self.params
 
- 
+
 class pointParamCalculator:
-    '''
-    this class handles an input .sed, or .csv, or pandas data frame containing wavelength and reflectance data and returns browse product 
-    summary values. Alternatively, you can supply a pandas data frame where the rows are reflectance data and the columns are
-    spectra. The first column of the data frame must contain the wavelengths for the spectra. Either a data path or a data frame 
-    should be provided, not both.
-    '''
-    
-    def __init__(self, data_path = False, df = False):
-        
+    """Spectral parameters for a table of spectra.
+
+    Give either ``data_path`` (a ``.csv`` or a glob of ``.sed`` files) or a
+    DataFrame whose first column is wavelength and whose other columns are
+    spectra. ``run()`` returns a DataFrame of parameters (rows) by spectrum
+    (columns).
+    """
+
+    def __init__(
+        self,
+        data_path: str | None = None,
+        df: pd.DataFrame | None = None,
+        parameters: Sequence[str] | None = None,
+    ) -> None:
         if data_path:
-            ext = data_path.split('.')[-1]
-            if ext == 'csv':
+            if data_path.endswith(".csv"):
                 df = pd.read_csv(data_path)
-            elif ext == 'sed':
+            elif data_path.endswith(".sed"):
                 df = u.getSedFiles(data_path)
             else:
-                raise ValueError('data_path must be a .sed or .csv file')
-
-        self.wvt = df.iloc[:,0]
-        self.spectra = df.iloc[:,1:]
-
-        self.validParams = self.determineValidParams()
-
+                raise ValueError("data_path must be a .sed or .csv file")
+        if df is None or df is False:
+            raise ValueError("give data_path or df")
+        self.wvt = to_nanometres(df.iloc[:, 0].to_numpy(dtype=np.float64))
+        self.spectra = df.iloc[:, 1:]
         self.specNames = list(self.spectra.columns)
-    
-    def determineValidParams(self):
-        # get wavelength bounds of data
-        b_min = np.min(self.wvt)
-        b_max = np.max(self.wvt)
+        self.validParams = (
+            list(parameters) if parameters is not None else valid_parameters(self.wvt)
+        )
+        logger.info("valid parameters: %s", self.validParams)
 
-        # get wavelength bounds for each parameter...
-        param_dict = pointParamCalculator.__dict__.copy()
-        param_list = list(param_dict)[4:-3]
-        w_bounds = [param_dict[param](self,check=True) for param in param_list]
+    def determineValidParams(self) -> list[str]:
+        return valid_parameters(self.wvt)
 
-        # check against parameter values
-        validParams = []
-        for bounds, param in zip(w_bounds,param_list):
-            # determine if min bound is valid within a tolerance level
-            tol = 32
-            if bounds[0] > (b_min-tol):
-                min_valid = True
-            else:
-                min_valid = False
-            # determine if max bound is valid
-            if bounds[1] < (b_max + tol):
-                max_valid = True
-            else:
-                max_valid = False
-            
-            # if one is invalid then reject the parameter, otherwise add it to the list
-            if min_valid and max_valid:
-                validParams.append(param)
-        
-        print(f'valid parameters:\n\t{validParams}')
-        return validParams
-    
-    # -------------------------------------------------------------------------
-    # parameter library
-    # -------------------------------------------------------------------------
-    # INDEX parameters
-    def HCPINDEX2(self, check=False):
-        if check:
-            paramValue = (1690,2530)
-        elif not check:
-            spectrum = self.spectrum
-            wvt = self.wvt
-            # extract data from image spectrum
-            R1690 = u.getRvalue(spectrum, wvt,1690, kwidth=7)
-            R2120 = u.getRvalue(spectrum, wvt,2120, kwidth=5)
-            R2140 = u.getRvalue(spectrum, wvt,2140, kwidth=7)
-            R2230 = u.getRvalue(spectrum, wvt,2230, kwidth=7)
-            R2250 = u.getRvalue(spectrum, wvt,2250, kwidth=7)
-            R2430 = u.getRvalue(spectrum, wvt,2430, kwidth=7)
-            R2460 = u.getRvalue(spectrum, wvt,2460, kwidth=7)
-            R2530 = u.getRvalue(spectrum, wvt,2530, kwidth=7)
-        
-            W1690 = u.getClosestWavelength(1690,wvt)
-            W2120 = u.getClosestWavelength(2120,wvt)
-            W2140 = u.getClosestWavelength(2140,wvt)
-            W2230 = u.getClosestWavelength(2230,wvt)
-            W2250 = u.getClosestWavelength(2250,wvt)
-            W2430 = u.getClosestWavelength(2430,wvt)
-            W2460 = u.getClosestWavelength(2460,wvt)
-            W2530 = u.getClosestWavelength(2530,wvt)
-        
-        
-            # compute the corrected reflectance interpolating 
-            slope = (R2530 - R1690)/(W2530 - W1690)      
-            intercept = R2530 - slope*W2530
-        
-            # weighted sum of relative differences
-            Rc2120 = slope*W2120 + intercept
-            Rc2140 = slope*W2140 + intercept
-            Rc2230 = slope*W2230 + intercept
-            Rc2250 = slope*W2250 + intercept
-            Rc2430 = slope*W2430 + intercept
-            Rc2460 = slope*W2460 + intercept
-        
-            paramValue=((1-(R2120/Rc2120))*0.1) + ((1-(R2140/Rc2140))*0.1) + ((1-(R2230/Rc2230))*0.15) + ((1-(R2250/Rc2250))*0.3) + ((1-(R2430/Rc2430))*0.2) + ((1-(R2460/Rc2460))*0.15)
-            if paramValue is -np.inf:
-                paramValue = np.nan
-        return paramValue
-    
-    def LCPINDEX2(self, check=False):
-        if check:
-            paramValue = (1690, 2450)
-        elif not check:
-            spectrum=self.spectrum
-            wvt=self.wvt
-            # extract data from image spectrum
-            R1690 = u.getRvalue(spectrum, wvt, 1690)
-            R1750 = u.getRvalue(spectrum, wvt, 1750)
-            R1810 = u.getRvalue(spectrum, wvt, 1810)
-            R1870 = u.getRvalue(spectrum, wvt, 1870)
-            R1560 = u.getRvalue(spectrum, wvt, 1560)
-            R2450 = u.getRvalue(spectrum, wvt, 2450)
-        
-            W1690 = u.getClosestWavelength(1690,wvt)
-            W1750 = u.getClosestWavelength(1750,wvt)
-            W1810 = u.getClosestWavelength(1810,wvt)
-            W1870 = u.getClosestWavelength(1870,wvt)
-            W1560 = u.getClosestWavelength(1560,wvt)
-            W2450 = u.getClosestWavelength(2450,wvt)
-        
-            # compute the corrected reflectance interpolating 
-            slope = (R2450 - R1560)/(W2450 - W1560)
-            intercept = R2450 - slope * W2450
-        
-            # weighted sum of relative differences
-            Rc1690 = slope*W1690 + intercept
-            Rc1750 = slope*W1750 + intercept
-            Rc1810 = slope*W1810 + intercept
-            Rc1870 = slope*W1870 + intercept
-        
-            paramValue=((1-(R1690/Rc1690))*0.2) + ((1-(R1750/Rc1750))*0.2) + ((1-(R1810/Rc1810))*0.3) + ((1-(R1870/Rc1870))*0.3)
-            if paramValue is -np.inf:
-                paramValue = np.nan
-        return paramValue
-    
-    def OLINDEX3(self, check=False):
-        if check:
-            paramValue = (1210, 1862)
-        elif not check:
-            spectrum=self.spectrum
-            wvt=self.wvt
-            # extract data from image spectrum
-            R1210 = u.getRvalue(spectrum, wvt,1210)
-            R1250 = u.getRvalue(spectrum, wvt,1250)
-            R1263 = u.getRvalue(spectrum, wvt,1263)
-            R1276 = u.getRvalue(spectrum, wvt,1276)
-            R1330 = u.getRvalue(spectrum, wvt,1330)
-            R1750 = u.getRvalue(spectrum, wvt,1750)
-            R1862 = u.getRvalue(spectrum, wvt,1862)
-        
-            # find closest Hyspex wavelength
-            W1210 = u.getClosestWavelength(1210,wvt)
-            W1250 = u.getClosestWavelength(1250,wvt)
-            W1263 = u.getClosestWavelength(1263,wvt)
-            W1276 = u.getClosestWavelength(1276,wvt)
-            W1330 = u.getClosestWavelength(1330,wvt)
-            W1750 = u.getClosestWavelength(1750,wvt)
-            W1862 = u.getClosestWavelength(1862,wvt)
-        
-            # ; compute the corrected reflectance interpolating 
-            slope = (R1862 - R1750)/(W1862 - W1750)   #;slope = ( R2120 - R1690 ) / ( W2120 - W1690 )
-            intercept = R1862 - slope*W1862               #;intercept = R2120 - slope * W2120
-        
-            Rc1210 = slope * W1210 + intercept
-            Rc1250 = slope * W1250 + intercept
-            Rc1263 = slope * W1263 + intercept
-            Rc1276 = slope * W1276 + intercept
-            Rc1330 = slope * W1330 + intercept
-        
-            paramValue = (((Rc1210-R1210)/(abs(Rc1210)))*0.1) + (((Rc1250-R1250)/(abs(Rc1250)))*0.1) + (((Rc1263-R1263)/(abs(Rc1263)))*0.2) + (((Rc1276-R1276)/(abs(Rc1276)))*0.2) + (((Rc1330-R1330)/(abs(Rc1330)))*0.4)
-            if paramValue is -np.inf:
-                paramValue = np.nan
-        return paramValue
-    
-    def SINDEX2(self, check = False):
-        if check:
-            paramValue = (2120, 2400)
-        elif not check:
-            spectrum = self.spectrum
-            wvt = self.wvt
-            paramValue = u.getRvalueDepthInvert(spectrum,wvt,2120, 2290, 2400,mw=7,hw=3)
-        return paramValue
-    
-    def GINDEX(self, check = False):
-        if check:
-            paramValue = (1420, 1820)
-        elif not check:
-            t1 = u.getRvalueDepth(self.spectrum,self.wvt,1420,1450,1463)
-            t2 = u.getRvalueDepth(self.spectrum,self.wvt,1463,1491,1515)
-            t3 = u.getRvalueDepth(self.spectrum,self.wvt,1515,1540,1576)
-            paramValue = np.nanmin((t1,t2,t3))
-        return paramValue
-    
-    # -----------------------------------------------------------------------------------------------
-    # Band Depth and shoulder parameters
-    def D460(self, check = False):
-        if check:
-            paramValue = (420, 520)
-        elif not check:
-            paramValue = u.getRvalueDepthInvert(self.spectrum, self.wvt, 420, 460, 520)
-        return paramValue
-    
-    def BD530_2(self, check = False):
-        if check:
-            paramValue = (440, 614)
-        elif not check:
-            paramValue = u.getRvalueDepth(self.spectrum, self.wvt, 440, 530, 614, lw=3, mw=3, hw=3)
-        return paramValue
-    
-    def BD670(self, check = False):
-        if check:
-            paramValue = (620, 745)
-        elif not check:
-            # this is a custom parameter
-            paramValue = u.getRvalueDepth(self.spectrum, self.wvt, 620, 670, 745, lw=3, mw=3, hw=3)
-        return paramValue
-    
-    def D700(self, check = False):
-        if check:
-            paramValue = (630, 830)
-        elif not check:
-            # a custom parameter for chlorophyll
-            # extract individual channels
-            R630 = u.getRvalue(self.spectrum,self.wvt,630)
-            R740 = u.getRvalue(self.spectrum,self.wvt,740)
-            R760 = u.getRvalue(self.spectrum,self.wvt,760)
-            R770 = u.getRvalue(self.spectrum,self.wvt,770)
-            R690 = u.getRvalue(self.spectrum,self.wvt,690,kwidth=3)
-            R710 = u.getRvalue(self.spectrum,self.wvt,710,kwidth=3)
-            R720 = u.getRvalue(self.spectrum,self.wvt,720,kwidth=3)
-            R830 = u.getRvalue(self.spectrum,self.wvt,830)
-            
-            # get closestgetClosestWavelengthngth
-            W630 = u.getClosestWavelength(630,self.wvt)
-            W740 = u.getClosestWavelength(740,self.wvt)
-            W760 = u.getClosestWavelength(760,self.wvt)
-            W770 = u.getClosestWavelength(770,self.wvt)
-            W690 = u.getClosestWavelength(690,self.wvt)
-            W710 = u.getClosestWavelength(710,self.wvt)
-            W720 = u.getClosestWavelength(720,self.wvt)
-            W830 = u.getClosestWavelength(830,self.wvt)
-            
-            # compute the interpolated continuum values at selected wavelengths between 630 and 830
-            slope= (R830 - R630)/(W830 - W630)
-            CR740 = R630 + slope*(W740 - W630)
-            CR760 = R630 + slope*(W760 - W630)
-            CR770 = R630 + slope*(W770 - W630)
-            CR690 = R630 + slope*(W690 - W630)
-            CR710 = R630 + slope*(W710 - W630)
-            CR720 = R630 + slope*(W720 - W630)
-        
-            # compute d700 with IEEE NaN values in place of CRISM NaN
-            paramValue = 1 - (((R690/CR690) + (R710/CR710) + (R720/CR720))/((R740/CR740) + (R760/CR760) + (R770/CR770)))
-            if paramValue is -np.inf:
-                paramValue = np.nan
-        return paramValue
-
-    def BD875(self, check = False):
-        if check:
-            paramValue = (747, 980)
-        elif not check:
-            # this is a custom parameter
-            paramValue = u.getRvalueDepth(self.spectrum, self.wvt, 747, 875, 980)
-        return paramValue
-        
-    def BD905(self, check = False):
-        if check:
-            paramValue = (750, 1300)
-        elif not check:
-            spectrum = self.spectrum
-            wvt = self.wvt
-            paramValue = u.getRvalueDepth(spectrum,wvt,750,905,1300)
-        return paramValue  
-    
-    def BD920_2(self, check = False):
-        if check:
-            paramValue = (807, 1200)
-        elif not check:
-            spectrum = self.spectrum
-            wvt = self.wvt
-            paramValue = u.getRvalueDepth(spectrum,wvt,807,920,1200)
-        return paramValue   
-
-    def BD1200(self, check = False):
-        if check:
-            paramValue = (1115, 1260)
-        elif not check:
-            paramValue = u.getRvalueDepth(self.spectrum, self.wvt, 1115, 1200, 1260)
-        return paramValue
-    
-    def BD1300(self, check = False): 
-        if check:
-            paramValue = (910, 1650)
-        elif not check:
-            spectrum = self.spectrum
-            wvt = self.wvt
-            paramValue = u.getRvalueDepth(spectrum,wvt,910,1275,1650)
-        return paramValue   
-    
-    def BD1400(self, check = False):
-        if check:
-            paramValue = (1330, 1467)
-        elif not check:
-            spectrum = self.spectrum
-            wvt = self.wvt
-            paramValue = u.getRvalueDepth(spectrum,wvt,1330, 1395, 1467,mw=3)
-        return paramValue
-    
-    def BD1450(self, check = False):
-        if check:
-            paramValue = (1340, 1535)
-        elif not check:
-            paramValue = u.getRvalueDepth(self.spectrum, self.wvt, 1340, 1450, 1535, mw=3)
-        return paramValue
-    
-    def BD1750(self, check = False):
-        if check:
-            paramValue = (1688, 1820)
-        elif not check:
-            paramValue = u.getRvalueDepth(self.spectrum, self.wvt, 1688, 1750, 1820)
-        return paramValue
-    
-    def BD1900r2(self, check = False):
-        if check:
-            paramValue = (1815, 2132)
-        elif not check:
-            spectrum = self.spectrum
-            wvt = self.wvt
-            # extract individual channels, replacing CRISM_NANs with IEEE_NaNs
-            R1908 = u.getRvalue(spectrum,wvt,1908, kwidth = 1) 
-            R1914 = u.getRvalue(spectrum,wvt,1914, kwidth = 1) 
-            R1921 = u.getRvalue(spectrum,wvt,1921, kwidth = 1) 
-            R1928 = u.getRvalue(spectrum,wvt,1928, kwidth = 1) 
-            R1934 = u.getRvalue(spectrum,wvt,1934, kwidth = 1) 
-            R1941 = u.getRvalue(spectrum,wvt,1941, kwidth = 1) 
-            R1862 = u.getRvalue(spectrum,wvt,1862, kwidth = 1) 
-            R1869 = u.getRvalue(spectrum,wvt,1869, kwidth = 1) 
-            R1875 = u.getRvalue(spectrum,wvt,1875, kwidth = 1) 
-            R2112 = u.getRvalue(spectrum,wvt,2112, kwidth = 1) 
-            R2120 = u.getRvalue(spectrum,wvt,2120, kwidth = 1) 
-            R2126 = u.getRvalue(spectrum,wvt,2126, kwidth = 1) 
-            
-            R1815 = u.getRvalue(spectrum, wvt, 1815)
-            R2132 = u.getRvalue(spectrum, wvt, 2132)
-            
-            # retrieve the CRISM wavelengths nearest the requested values
-            W1908 = u.getClosestWavelength(1908, wvt)
-            W1914 = u.getClosestWavelength(1914, wvt)
-            W1921 = u.getClosestWavelength(1921, wvt)
-            W1928 = u.getClosestWavelength(1928, wvt)
-            W1934 = u.getClosestWavelength(1934, wvt)
-            W1941 = u.getClosestWavelength(1941, wvt)
-            W1862 = u.getClosestWavelength(1862, wvt)#
-            W1869 = u.getClosestWavelength(1869, wvt)
-            W1875 = u.getClosestWavelength(1875, wvt)
-            W2112 = u.getClosestWavelength(2112, wvt)
-            W2120 = u.getClosestWavelength(2120, wvt)
-            W2126 = u.getClosestWavelength(2126, wvt)
-            W1815 = u.getClosestWavelength(1815, wvt)#  
-            W2132 = u.getClosestWavelength(2132, wvt) 
-            
-            # compute the interpolated continuum values at selected wavelengths between 1815 and 2530
-            slope = (R2132 - R1815)/(W2132 - W1815)
-            CR1908 = R1815 + slope *(W1908 - W1815)
-            CR1914 = R1815 + slope *(W1914 - W1815)
-            CR1921 = R1815 + slope *(W1921 - W1815) 
-            CR1928 = R1815 + slope *(W1928 - W1815)
-            CR1934 = R1815 + slope *(W1934 - W1815)
-            CR1941 = R1815 + slope *(W1941 - W1815) 
-            
-            CR1862 = R1815 + slope*(W1862 - W1815)
-            CR1869 = R1815 + slope*(W1869 - W1815)
-            CR1875 = R1815 + slope*(W1875 - W1815)    
-            CR2112 = R1815 + slope*(W2112 - W1815)
-            CR2120 = R1815 + slope*(W2120 - W1815)
-            CR2126 = R1815 + slope*(W2126 - W1815)
-            paramValue= 1.0-((R1908/CR1908+R1914/CR1914+R1921/CR1921+R1928/CR1928+R1934/CR1934+R1941/CR1941)/(R1862/CR1862+R1869/CR1869+R1875/CR1875+R2112/CR2112+R2120/CR2120+R2126/CR2126))
-            if paramValue is -np.inf:
-                paramValue = np.nan
-        return paramValue
-    
-    def BD1900_2(self, check = False):
-        if check:
-            paramValue = (1850, 2067)
-        elif not check:
-            spectrum = self.spectrum
-            wvt = self.wvt
-            paramValue = u.getRvalueDepth(spectrum,wvt,1850, 1930, 2067)
-        return paramValue
-    
-    def BD2100_2(self, check = False):
-        if check:
-            paramValue = (1930, 2250)
-        elif not check:
-            spectrum = self.spectrum
-            wvt = self.wvt
-            paramValue = u.getRvalueDepth(spectrum,wvt,1930, 2132, 2250,lw=3,hw=3)
-        return paramValue
-    
-    def BD2100_3(self, check = False):
-        if check:
-            paramValue = (2016, 2220)
-        elif not check:
-            paramValue = u.getRvalueDepth(self.spectrum, self.wvt, 2016, 2100, 2220)
-        return paramValue
-    
-    def BD2165(self, check = False):
-        if check:
-            paramValue = (2120, 2230)
-        elif not check:
-            spectrum = self.spectrum
-            wvt = self.wvt
-            paramValue = u.getRvalueDepth(spectrum,wvt,2120,2165,2230,mw=3,hw=3) #(kaolinite group)
-        return paramValue
-    
-    def BD2190(self, check = False):
-        if check:
-            paramValue = (2120, 2250)
-        elif not check:
-            spectrum = self.spectrum
-            wvt = self.wvt
-            paramValue = u.getRvalueDepth(spectrum,wvt,2120,2185,2250,mw=3,hw=3) #(Beidellite, Allophane)
-        return paramValue
-    
-    def D2200(self, check = False):
-        if check:
-            paramValue = (1815, 2430)
-        elif not check:
-            spectrum = self.spectrum
-            wvt = self.wvt
-            # extract individual channels
-            R1815 = u.getRvalue(spectrum, wvt,1815, kwidth=7)
-            R2165 = u.getRvalue(spectrum, wvt,2165)
-            R2210 = u.getRvalue(spectrum, wvt,2210, kwidth=7)
-            R2230 = u.getRvalue(spectrum, wvt,2230, kwidth=7)
-            R2430 = u.getRvalue(spectrum, wvt,2430, kwidth=7)
-        
-        
-            # retrieve the CRISM wavelengths nearest the requested values
-            W1815 = u.getClosestWavelength(1815, wvt)
-            W2165 = u.getClosestWavelength(2165, wvt) 
-            W2210 = u.getClosestWavelength(2210, wvt)
-            W2230 = u.getClosestWavelength(2230, wvt)
-            W2430 = u.getClosestWavelength(2430, wvt)
-            
-            slope = (R2430 - R1815)/(W2430 - W1815)
-        
-            CR2165 = R1815 + slope*(W2165 - W1815)    
-            CR2210 = R1815 + slope*(W2210 - W1815)
-            CR2230 = R1815 + slope*(W2230 - W1815)
-        
-            # compute d2200 
-            paramValue = 1 - (((R2210/CR2210) + (R2230/CR2230))/(2*(R2165/CR2165)))
-            if paramValue is -np.inf:
-                paramValue = np.nan
-        return paramValue
-    
-    def BD2210_2(self, check = False):
-        if check:
-            paramValue = (2165, 2290)
-        elif not check:
-            spectrum = self.spectrum
-            wvt = self.wvt
-            paramValue = u.getRvalueDepth(spectrum,wvt,2165,2210,2290) #(kaolinite group)
-        return paramValue
-    
-    def BD2250(self, check = False):
-        if check:
-            paramValue = (2120, 2340)
-        elif not check:
-            spectrum = self.spectrum
-            wvt = self.wvt
-            paramValue = u.getRvalueDepth(spectrum,wvt, 2120, 2245, 2340, mw=7,hw=3) 
-        return paramValue
-    
-    def BD2265(self, check = False):
-        if check:
-            paramValue = (2120, 2340)
-        elif not check:
-            spectrum = self.spectrum
-            wvt = self.wvt
-            paramValue = u.getRvalueDepth(spectrum,wvt, 2120, 2265, 2340, mw=3,hw=5) 
-        return paramValue
-    
-    def BD2290(self, check = False):
-        if check:
-            paramValue = (2250, 2350)
-        elif not check:
-            spectrum = self.spectrum
-            wvt = self.wvt
-            paramValue = u.getRvalueDepth(spectrum,wvt,2250, 2290, 2350) #(fe/mg phyllo group)
-        return paramValue
-    
-    def D2300(self, check = False):
-        if check:
-            paramValue = (1815, 2530)
-        elif not check:
-            spectrum = self.spectrum
-            wvt = self.wvt
-            # extract individual channels
-            R1815 = u.getRvalue(spectrum,wvt,1815)
-            R2120 = u.getRvalue(spectrum,wvt,2120)
-            R2170 = u.getRvalue(spectrum,wvt,2170)
-            R2210 = u.getRvalue(spectrum,wvt,2210)
-            R2290 = u.getRvalue(spectrum,wvt,2290,kwidth=3)
-            R2320 = u.getRvalue(spectrum,wvt,2320,kwidth=3)
-            R2330 = u.getRvalue(spectrum,wvt,2330,kwidth=3)
-            R2530 = u.getRvalue(spectrum,wvt,2530)
-            
-            # get closestgetClosestWavelengthngth
-            W1815 = u.getClosestWavelength(1815,wvt)
-            W2120 = u.getClosestWavelength(2120,wvt)
-            W2170 = u.getClosestWavelength(2170,wvt)
-            W2210 = u.getClosestWavelength(2210,wvt)
-            W2290 = u.getClosestWavelength(2290,wvt)
-            W2320 = u.getClosestWavelength(2320,wvt)
-            W2330 = u.getClosestWavelength(2330,wvt)
-            W2530 = u.getClosestWavelength(2530,wvt)
-            
-            # compute the interpolated continuum values at selected wavelengths between 1815 and 2530
-            slope = (R2530 - R1815)/(W2530 - W1815)
-            CR2120 = R1815 + slope*(W2120 - W1815)
-            CR2170 = R1815 + slope*(W2170 - W1815)
-            CR2210 = R1815 + slope*(W2210 - W1815)
-            CR2290 = R1815 + slope*(W2290 - W1815)
-            CR2320 = R1815 + slope*(W2320 - W1815)
-            CR2330 = R1815 + slope*(W2330 - W1815)
-        
-            # compute d2300
-            paramValue = 1 - (((R2290/CR2290) + (R2320/CR2320) + (R2330/CR2330))/((R2120/CR2120) + (R2170/CR2170) + (R2210/CR2210)))
-            if paramValue is -np.inf:
-                paramValue = np.nan
-        return paramValue
-    
-    def BD2355(self, check = False):
-        if check:
-            paramValue = (2300, 2450)
-        elif not check:
-            spectrum = self.spectrum
-            wvt = self.wvt
-            paramValue = u.getRvalueDepth(spectrum,wvt,2300, 2355, 2450) #(fe/mg phyllo group)
-        return paramValue
-    
-    def BDCARB(self, check = False):
-        if check:
-            paramValue = (2230, 2600)
-        elif not check:
-            spectrum = self.spectrum
-            wvt = self.wvt
-            # extract channels, replacing CRISM_NAN with IEEE NAN
-            R2230 = u.getRvalue(spectrum, wvt, 2230)
-            R2320 = u.getRvalue(spectrum, wvt, 2320)
-            R2330 = u.getRvalue(spectrum, wvt, 2330)
-            R2390 = u.getRvalue(spectrum, wvt, 2390)
-            R2520 = u.getRvalue(spectrum, wvt, 2520)
-            R2530 = u.getRvalue(spectrum, wvt, 2530)
-            R2600 = u.getRvalue(spectrum, wvt, 2600)
-        
-            # identify nearest CRISM wavelengths
-            WL1 = u.getClosestWavelength(2230,wvt)
-            WC1 = (u.getClosestWavelength(2330,wvt)+u.getClosestWavelength(2320,wvt))*0.5
-            WH1 = u.getClosestWavelength(2390,wvt)
-            a =  (WC1 - WL1)/(WH1 - WL1)  # a gets multipled by the longer (higher wvln)  band
-            b = 1.0-a                     # b gets multiplied by the shorter (lower wvln) band
-        
-            WL2 =  u.getClosestWavelength(2390,wvt)
-            WC2 = (u.getClosestWavelength(2530,wvt) + u.getClosestWavelength(2520,wvt))*0.5
-            WH2 =  u.getClosestWavelength(2600,wvt)
-            c = (WC2 - WL2)/(WH2 - WL2)   # c gets multipled by the longer (higher wvln)  band
-            d = 1.0-c                           # d gets multiplied by the shorter (lower wvln) band
-        
-            # compute bdcarb
-            paramValue = 1.0 - (np.sqrt((((R2320 + R2330)*0.5)/(b*R2230 + a*R2390))*(((R2520 + R2530)*0.5)/(d*R2390 + c*R2600))))
-            if paramValue is -np.inf:
-                paramValue = np.nan
-        return paramValue
-    
-    # MIN parameters
-    def MIN2295_2480(self, check = False):
-        if check:
-            paramValue = (2165, 2570)
-        elif not check:
-            spectrum = self.spectrum
-            wvt = self.wvt
-            paramValue1 = u.getRvalueDepth(spectrum, wvt,2165,2295,2364)
-            paramValue2 = u.getRvalueDepth(spectrum,wvt,2364,2480,2570)
-            paramValue3 = [paramValue1,paramValue2]
-            paramValue = np.min(paramValue3)
-            if paramValue is -np.inf:
-                paramValue = np.nan
-        return paramValue
-    
-    def MIN2250(self, check = False):
-        if check:
-            paramValue = (2165, 2350)
-        elif not check:
-            spectrum = self.spectrum
-            wvt = self.wvt
-            paramValue1 = u.getRvalueDepth(spectrum, wvt,2165, 2210, 2350)
-            paramValue2 = u.getRvalueDepth(spectrum,wvt,2165, 2265, 2350)
-            paramValue3 = [paramValue1,paramValue2]
-            paramValue = np.min(paramValue3)
-            if paramValue is -np.inf:
-                paramValue = np.nan
-        return paramValue
-    
-    def MIN2345_2537(self, check = False):
-        if check:
-            paramValue = (2250, 2602)
-        elif not check:
-            spectrum = self.spectrum
-            wvt = self.wvt
-            paramValue1 = u.getRvalueDepth(spectrum, wvt,2250, 2345, 2430)
-            paramValue2 = u.getRvalueDepth(spectrum,wvt,2430, 2537, 2602)
-            paramValue3 = [paramValue1,paramValue2]
-            paramValue = np.min(paramValue3)
-            if paramValue is -np.inf:
-                paramValue = np.nan
-        return paramValue    
-    
-    # All othe parameters (ratios, slopes, peaks)
-    def ISLOPE(self, check = False):
-        if check:
-            paramValue = (1815, 2530)
-        elif not check:
-            spectrum = self.spectrum
-            wvt = self.wvt
-            # extract individual bands
-            R1815 = u.getRvalue(spectrum, wvt, 1815)
-            R2530 = u.getRvalue(spectrum, wvt, 2530)
-        
-            W1815 = u.getClosestWavelength(1815,wvt)
-            W2530 = u.getClosestWavelength(2530,wvt)
-        
-            # want in units of reflectance / um
-            paramValue = 1000.0 * ( R1815 - R2530 )/(W2530 - W1815)
-            if paramValue is -np.inf:
-                paramValue = np.nan
-        return paramValue
-    
-    def RPEAK1(self, check = False):
-        if check:
-            return (442, 989)
-        elif not check:
-            spectrum = self.spectrum
-            wvt = list(self.wvt)
-            rp_wv = [442,533,600,710,740,775,800,833,860,892,925,963,989]
-            rp_i = [wvt.index(u.getClosestWavelength(i,wvt)) for i in rp_wv]
-            rp_w = [u.getClosestWavelength(i,wvt) for i in rp_wv]
-            rp_ = spectrum.iloc[rp_i]
-            x_ = np.linspace(rp_w[0],rp_w[-1],num=5000)
-            rp_l = np.empty(np.shape(spectrum))
-            rp_r = np.empty(np.shape(spectrum))
-            coefs = np.polyfit(rp_w,rp_[:],5)
-            poly = np.poly1d(coefs)
-            y_ = list(poly(x_))
-            rp_l = x_[y_.index(np.max(y_))]/1000 #wavelength value of peak reflectance
-            rp_r = np.max(y_)
-            self.rpeak_reflectance = rp_r
-            return rp_l
-    
-    def RPEAK1_2(self, check = False):
-        if check:
-            return (500, 1150)
-        elif not check:
-            from scipy.signal import savgol_filter
-            from scipy.interpolate import UnivariateSpline
-            spectrum = self.spectrum
-            wvt = np.array(self.wvt)  # Convert to NumPy array for proper masking
-            wvl_mask = (wvt >= 500) & (wvt <= 1150)
-            rp_wv = wvt[wvl_mask]
-            rp_i = [np.where(wvt == u.getClosestWavelength(i, wvt))[0][0] for i in rp_wv]
-            rp_w = [u.getClosestWavelength(i, wvt) for i in rp_wv]
-            rp_ = spectrum.iloc[rp_i].values  # Ensure this returns a NumPy array
-            x_ = np.linspace(rp_w[0], rp_w[-1], num=5000)
-
-            # Smooth
-            y_sav = savgol_filter(rp_, window_length=7, polyorder=3)
-
-            # Fit spline
-            spline = UnivariateSpline(rp_w, y_sav, k=5, s=0.1)
-
-            # Find the maximum of the fitted spline
-            y_spline = spline(x_)
-            max_y = np.max(y_spline)
-            max_x = x_[np.argmax(y_spline)]
-            self.rpeak_reflectance = max_y
-
-            return max_x / 1000
-   
-    def BDI1000VIS(self,rp_r=False, check = False):
-        if check:
-            return (833, 989)
-        elif not check:
-            spectrum = self.spectrum
-            wvt = list(self.wvt)
-            if rp_r is False:
-                rp_l = self.RPEAK1()
-                rp_r = self.rpeak_reflectance
-            # multispectral version
-            # bdi_wv = [833,860,892,925,951,984,1023] 
-            # vi = [wvt.index(u.getClosestWavelength(i,wvt)) for i in bdi_wv]
-            # wv_um = [u.getClosestWavelength(i,wvt)/1000 for i in bdi_wv]
-            
-            vi0 = wvt.index(u.getClosestWavelength(833,wvt))
-            vi1 = wvt.index(u.getClosestWavelength(1023,wvt))
-            n = vi1-vi0 + 1
-            vi = np.linspace(vi0,vi1,n,dtype=int)
-            wv_um = [wvt[i]/1000 for i in vi]
-            bdi1000_spectrum = spectrum.iloc[vi]
-            bdi_norm = np.empty(np.shape(bdi1000_spectrum))
-            for b in range(len(vi)):
-                bdi_norm[b] = bdi1000_spectrum.iloc[b]/rp_r
-            
-            coefs = np.polyfit(wv_um,bdi_norm,3)
-            poly = np.poly1d(coefs)
-            pint = np.poly1d(poly.integ())
-            paramValue = pint(wv_um[-1])-pint(wv_um[0])#it.(wv_um,1.0-spec_vec)
-            return paramValue
-   
-    def IRR2(self, check = False):
-        if check:
-            paramValue = (2210, 2530)
-        elif not check:
-            spectrum = self.spectrum
-            wvt = self.wvt
-            paramValue = u.getRvalueRatio(spectrum,wvt,2530,2210)
-        return paramValue
-    
-    # -------------------------------------------------------------------------
-    # Run the parameters
-    # -------------------------------------------------------------------------
-    def run(self):
-        # loop through paramList, add result to a tuple. keep track of valid parameters
-        param_dict = pointParamCalculator.__dict__.copy()
-        parameter_array = np.empty((len(self.validParams),len(self.specNames)))
-        j = 0 #spectrum index tracker
-        for spectrum in self.specNames:
-            i = 0 #parameter index tracker
-            self.spectrum = self.spectra.iloc[:,j]
-            for param in self.validParams:
-                if param == 'BDI1000VIS' and 'RPEAK1' in self.validParams:
-                    # avoid calculating RPEAK1 values twice
-                    parameter_array[i,j] = param_dict[param](self, rp_r=self.rpeak_reflectance)
-                elif isinstance(param_dict[param](self), tuple):
-                    parameter_array[i,j] = param_dict[param](self)[0]
-                else:
-                    parameter_array[i,j] = param_dict[param](self)
-                i += 1
-            j += 1
-
-        self.parameter_df = pd.DataFrame(parameter_array,columns=self.specNames)
-        # add row labels for each parameter
-        self.parameter_df.set_index(pd.Index(self.validParams),inplace=True)
+    def run(self) -> pd.DataFrame:
+        table = self.spectra.to_numpy(dtype=np.float64).T  # (spectra, bands)
+        values = compute(table, self.wvt, self.validParams, dtype=np.float64)  # (spectra, params)
+        self.parameter_df = pd.DataFrame(
+            values.T, index=pd.Index(self.validParams), columns=self.specNames
+        )
         return self.parameter_df
-    

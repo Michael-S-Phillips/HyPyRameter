@@ -1,473 +1,80 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Created on Sat Jul  9 15:34:25 2022
-utility functions for parameter calculations
+"""Legacy helpers.
 
-@author: phillms1
+The cube functions (``getBand``, ``getBandDepth``, ...) now delegate to
+:mod:`hypyrameter.bands` / :mod:`hypyrameter.parameters`; the point-spectrum
+helpers (``getRvalue*``) and the .sed / USGS readers are kept as they were.
 """
-import numpy as np
-from scipy.interpolate import CubicSpline as cs
-from scipy.interpolate import UnivariateSpline
-import multiprocessing as mp
-import math
+
+from __future__ import annotations
+
 import glob
+
+import numpy as np
 import pandas as pd
-from scipy.signal import savgol_filter
+from scipy.interpolate import CubicSpline as cs
+
+from hypyrameter import parameters as _p
+from hypyrameter.bands import band, closest_wavelength
+from hypyrameter.browse import stretch
 
 
-# -----------------------------------------------------
-# utility functions for image cube processing
-# ----------------------------------------------------
+def getClosestWavelength(wl, band_list):
+    return closest_wavelength(np.asarray(band_list, dtype=np.float64), wl)
 
-# function for parallel processing
-def getCubicSplineIntegral(args):
-    """return the integral of cubic spline fit
 
-    Args:
-        args (tuple): tuple of arguments for cubic spline fit
+def getBand(cube, wvt, wl, kwidth=5):
+    return band(cube, wvt, wl, kwidth)
 
-    Returns:
-        integrand: integral of cubic spline of defined wavelength region
-    """
-    wv_um_,spec_vec = args
-    non_finite_values = [value for value in spec_vec if not math.isfinite(value)]
-    if non_finite_values:
-        integrand = np.nan
-    else:
-        splineFit = cs(wv_um_, spec_vec)
-        integrand = splineFit.integrate(wv_um_[0], wv_um_[-1])
-    return integrand
-    
-def getPolyInt(args):
-    """returns integrated polynomial
 
-    Args:
-        args (tuple): tuple of arguments for polyfit
+def getBandDepth(cube, wvt, low, mid, hi, lw=5, mw=5, hw=5):
+    return _p.band_depth(_p.Spectra(cube, wvt), low, mid, hi, lw, mw, hw)
 
-    Returns:
-        integrand: integral of polynomial of defined wavelength region
-    """
-    wv_um_,spec_vec,d = args
-    coefs = np.polyfit(wv_um_,spec_vec,d)
-    poly=np.poly1d(coefs)
-    pint = np.poly1d(poly.integ())
-    integrand = pint(wv_um_[-1])-pint(wv_um_[0])
-    return integrand
-    
-def getPoly(args):
-    """get polynomial definition
 
-    Args:
-        args (tuple): tuple of arguments for polyfit
-
-    Returns:
-        poly: np 1d polynomial object
-    """
-    rp_w,rp_flat,d = args
-    coefs = np.polyfit(rp_w,rp_flat,d)
-    poly=np.poly1d(coefs)
-    return poly
+def getBandDepthInvert(cube, wvt, low, mid, hi, lw=5, mw=5, hw=5):
+    return _p.band_depth_invert(_p.Spectra(cube, wvt), low, mid, hi, lw, mw, hw)
 
 
 def getBandArea(cube, wvt, low, high, lw=5, hw=5):
-    """retrieve band area
+    return _p.band_area(_p.Spectra(cube, wvt), low, high, lw, hw)
 
-    Args:
-        cube (array): multiband image array
-        wvt (list): wave table
-        low (float): lowest wavelength anchor point
-        high (float): highest wavelength anchor point
-        lw (int, optional): low wavelength median filter kernel width. Defaults to 5.
-        hw (int, optional): high wavelength median filter kernel width. Defaults to 5.
 
-    Returns:
-        (array): band area image
-    """
-    y1 = getBand(cube, wvt, low, kwidth=lw)
-    x1 = getClosestWavelength(low, wvt)
-    y2 = getBand(cube, wvt, high, kwidth=hw)
-    x2 = getClosestWavelength(high, wvt)
-    m = (y2-y1)/(x2-x1) #m is the slope at all pixels
-    b = y2-m*x2         #b is the intercept at all pixels
-    woi = np.linspace(wvt.index(x1),wvt.index(x2),wvt.index(x2)-wvt.index(x1)+1,dtype=int).tolist()
-    wol = [wvt[w] for w in woi]
-    s0, s1 = y1.shape
-    s2 = len(woi)
-    h = np.zeros([s0,s1,s2],dtype=np.float32) #continuum subtracted cube
-    # y = []
-    for i in woi:
-        y = (m*wvt[i]+b) #continuum value
-        h[:,:,int(i-np.min(woi))] = getBand(cube,wvt,wvt[i],kwidth=1) - y
-    # h = 1000*h/(x2-x1)
-    h_flat = np.reshape(h,[s0*s1, s2])
-    ba = []
-    args = [(wol, h_flat[i,:]) for i in range(s0*s1)]
-    with mp.Pool() as pool:
-        for ci in pool.imap(getCubicSplineIntegral, args):
-            ba.append(ci)
-    ba = -1*np.reshape(ba, [s0,s1])
-    return ba
+def getSlope(cube, wvt, low, high, kwidth=5):
+    return _p.slope(_p.Spectra(cube, wvt), low, high, kwidth)
 
-def getBandAreaInvert(cube, wvt, low, high, lw=5, hw=5):
-    """retrieve inverted band area
 
-    Args:
-        cube (array): multiband image array
-        wvt (list): wave table
-        low (float): lowest wavelength anchor point
-        high (float): highest wavelength anchor point
-        lw (int, optional): kernel width for median filter. Defaults to 5.
-        hw (int, optional): kernel width for median filter. Defaults to 5.
+def getBandRatio(cube, wvt, num_l, denom_l, num_w=5, denom_w=5):
+    return _p.band_ratio(_p.Spectra(cube, wvt), num_l, denom_l, num_w, denom_w)
 
-    Returns:
-        (array): inverted band area image
-    """
-    # this isn't really band area... it's average height 
-    y1 = getBand(cube, wvt, low, kwidth=lw)
-    x1 = getClosestWavelength(low, wvt)
-    y2 = getBand(cube, wvt, high, kwidth=hw)
-    x2 = getClosestWavelength(high, wvt)
-    m = (y2-y1)/(x2-x1) #m is the slope at all pixels
-    b = y2-m*x2         #b is the intercept at all pixels
-    woi = np.linspace(wvt.index(x1),wvt.index(x2),wvt.index(x2)-wvt.index(x1)+1,dtype=int).tolist()
-    h = np.zeros(y1.shape,dtype=np.float32)
-    for i in woi:
-        y = m*wvt[i]+b #continuum value
-        h += y-getBand(cube,wvt,wvt[i],kwidth=1)
-    # h = 1000*h/(x2-x1)
-    
-    return -h
-
-def getSlope(cube, wvt, low, high, kwidth = 5):
-    """retrieve slope
-
-    Args:
-        cube (array): multiband image array
-        wvt (list): wave table
-        low (float): lowest wavelength anchor point
-        high (float): highest wavelength anchor point
-        kwidth (int, optional): kernel width for median filter. Defaults to 5.
-
-    Returns:
-        (array): slope image
-    """
-    y1 = getBand(cube, wvt, low, kwidth=kwidth)
-    x1 = getClosestWavelength(low, wvt)
-    y2 = getBand(cube, wvt, high, kwidth=kwidth)
-    x2 = getClosestWavelength(high, wvt)
-    m = (y2-y1)/(x2-x1) #m is the slope at all pixels
-    nmin = np.nanmin(np.where(m>-np.inf,m,np.nan))
-    img = np.where(m>-np.inf,m,nmin)
-    return img
-
-def getBand(cube,wvt,wl,kwidth = 5):
-    """retrieve band closest to target wavelength, wl
-
-    Args:
-        cube (array): multiband image array
-        wvt (list): wave table
-        wl (float): target wavelength
-        kwidth (int, optional): kernel width. Defaults to 5.
-
-    Returns:
-        (array): median filtered array closest to target wavelength
-    """
-    delta = [q-wl for q in wvt]
-    bindex = delta.index(min(delta,key=abs))
-    if kwidth == 1:
-        r = cube[:,:,bindex]
-    else:
-        w = (kwidth-1)/2
-        r = np.median(cube[:,:,int(bindex-w):int(bindex+w)],axis=2)
-    return r
-
-def getClosestWavelength(wl,band_list):
-    """retrieve closest wavelength
-
-    Args:
-        wl (float): target wavelength
-        band_list (list): list of wavelength values
-
-    Returns:
-        (float): band closest to target wavelength
-    """
-    delta = [q-wl for q in band_list]
-    return band_list[delta.index(min(delta,key=abs))]
-
-def buildSummary(p1,p2,p3):
-    """builds  3-band summary product (browse product)
-
-    Args:
-        p1 (array): parameter 1
-        p2 (array): parameter 2
-        p3 (array): parameter 3
-
-    Returns:
-        (array): 3-band browse product
-    """
-    shp = np.shape(p1)
-    shp = np.append(shp,3)
-    a = np.empty(shp)
-    a[:,:,0]=p1
-    a[:,:,1]=p2
-    a[:,:,2]=p3
-    return a
 
 def getNDI(cube, wvt, a_l, b_l):
-    """calculates normalized difference index
+    return _p.normalized_difference(_p.Spectra(cube, wvt), a_l, b_l)
 
-    Args:
-        a (array): parameter 1
-        b (array): parameter 2
 
-    Returns:
-        (array): NDI image
-    """
-    a = getBand(cube, wvt, a_l)
-    b = getBand(cube, wvt, b_l)
-    
-    return (a-b)/(a+b)
-
-def getSmoothRpeak(args,  wl= 7, po = 3):
+def getCubicSplineIntegral(args):
+    """Integral of the cubic spline through (x, y); ``args`` is ``(x, y)``."""
     x, y = args
-    # smooth
-    y_sav = savgol_filter(y, window_length=wl, polyorder=po)
-    # fit spline
-    spline = UnivariateSpline(x, y_sav, k=5, s=0.1)
-
-    # Find the maximum of the fitted spline
-    x_range = np.linspace(min(x), max(x), 500)
-    y_spline = spline(x_range)
-    max_y = np.nanmax(y_spline)
-    max_x = x_range[np.argmax(y_spline)]
-
-    return max_x/1000, max_y
+    return _p.spline_area(np.asarray(x, dtype=np.float64), np.asarray(y, dtype=np.float64))
 
 
-def getBandDepth(cube, wvt,low, mid, hi, lw=5, mw=5, hw=5):
-    """retrieves band depth
+def stretchBand(p, stype="linear", perc=2, factor=2.5):
+    return stretch(p, stype, perc, factor)
 
-    Args:
-        cube (array): multiband image array
-        wvt (list): wave table
-        low (float): wavelength for lower anchor point
-        mid (float): wavelength for center of band
-        hi (float): wavelength for upper anchor point
-        lw (int, optional): kernel width for median filter. Defaults to 5.
-        mw (int, optional): kernel width for median filter. Defaults to 5.
-        hw (int, optional): kernel width for median filter. Defaults to 5.
 
-    Returns:
-        img (array): band depth imag
-    """
-    # retrieve bands from cube
-    Rlow = getBand(cube, wvt, low, kwidth=lw)
-    Rmid = getBand(cube, wvt, mid, kwidth=mw)
-    Rhi = getBand(cube, wvt, hi, kwidth=hw)
-    
-    # determine wavelengths for low, mid, hi
-    WL = getClosestWavelength(low,wvt)
-    WM = getClosestWavelength(mid,wvt)
-    WH = getClosestWavelength(hi,wvt)
-    
-    a = (WM-WL)/(WH-WL)     #a gets multipled by the longer band
-    b = 1.0-a               #b gets multiplied by the shorter band
-    
-    # compute the band depth using precomputed a and b
-    img = 1.0 - (Rmid/(b*Rlow + a*Rhi))
-    nmin = np.nanmin(np.where(img>-np.inf,img,np.nan))
-    img = np.where(img>-np.inf,img,nmin)
-    return img
+def stretchNBands(img, stype="linear", perc=2, factor=2.5):
+    return np.dstack([stretch(img[..., i], stype, perc, factor) for i in range(img.shape[-1])])
 
-def getBandDepthInvert(cube,wvt,low,mid,hi,lw=5,mw=5,hw=5):
-    """retrieve inverted band depth
-
-    Args:
-        cube (array): multiband image array
-        wvt (list): wave table
-        low (float): wavelength for lower anchor point
-        mid (float): wavelength for center of band
-        hi (float): wavelength for upper anchor point
-        lw (int, optional): kernel width for median filter. Defaults to 5.
-        mw (int, optional): kernel width for median filter. Defaults to 5.
-        hw (int, optional): kernel width for median filter. Defaults to 5.
-
-    Returns:
-        img (array): inverted band depth image
-    """
-    # retrieve bands from cube
-    Rlow = getBand(cube,wvt,low,kwidth=lw)
-    Rmid = getBand(cube,wvt,mid,kwidth=mw)
-    Rhi = getBand(cube,wvt,hi,kwidth=hw)
-
-    # determine wavelength values for closest channels
-    WL = getClosestWavelength(low,wvt)
-    WM = getClosestWavelength(mid,wvt)
-    WH = getClosestWavelength(hi,wvt)
-    a = (WM-WL)/(WH-WL)     # a gets multipled by the longer band
-    b = 1.0-a               # b gets multiplied by the shorter band
-
-    # compute the band depth using precomputed a and b
-    img = 1.0 - ((b*Rlow + a*Rhi)/Rmid)
-    nmin = np.nanmin(np.where(img>-np.inf,img,np.nan))
-    img = np.where(img>-np.inf,img,nmin)
-    return img
-
-def getBandRatio(cube,wvt,num_l,denom_l,num_w=5,denom_w=5):
-    """retrieves band ratio
-
-    Args:
-        cube (array): multiband image array
-        wvt (list): wave table
-        num_l (float): numerator wavelength value
-        denom_l (float): denomenator wavelength value
-        num_w (int, optional): number of wavelengths from which to take a median value for numerator. Defaults to 5.
-        denom_w (int, optional): number of wavelengths from which to take a median value for denom. Defaults to 5.
-
-    Returns:
-        img (array): band ratio image
-    """
-    num = getBand(cube, wvt, num_l,kwidth=num_w)
-    denom = getBand(cube, wvt, denom_l,kwidth=denom_w)
-    img = num/denom
-    nmin = np.nanmin(np.where(img>-np.inf,img,np.nan))
-    img = np.where(img>-np.inf,img,nmin)
-    return img
-
-def normalizeParameter(p):
-    """normlizes an array
-
-    Args:
-        p (array): parameter array
-
-    Returns:
-        (array): normalized array with mean offset and std scaling
-    """
-    return (p-np.nanmean(p))/np.nanstd(p)
 
 def browse2bit(B):
-    """converts floating point arrays to uint8
-
-    Args:
-        B (array): multiband image array
-
-    Returns:
-        (array): converted uint8 array
-    """
-    A=B
-    for i in range(np.shape(B)[2]):
-        b = B[:,:,i]
-        A[:,:,i] = np.array((255*((b-np.nanmin(b))/(np.nanmax(b)-np.nanmin(b)))),dtype='int')
-    return A
-
-def stretchBand(p, stype='linear', perc = 2, factor = 2.5):
-    """function to stretch images
-
-    Args:
-        p (array): parameter band
-        stype (str, optional): stretch type. Defaults to 'linear'.
-        perc (int, optional): percentage for percent stretch. Defaults to 2.
-        factor (float, optional): number of standard deviations in std stretch. Defaults to 2.5.
-    Returns:
-        sp (array): stretched array
-    """
-    # def linearStretch(image, low_percent,high_percent):
-    if stype == 'linear':
-        # Convert image to numpy array
-        img_array = np.array(p)
-
-        # Calculate lower and upper percentiles
-        lower_percentile = np.percentile(img_array, perc)
-        upper_percentile = np.percentile(img_array, 100-perc)
-
-        # Linearly stretch the image
-        sp = (img_array - lower_percentile) * 255 / (upper_percentile - lower_percentile)
-        sp = np.clip(sp, 0, 255)
-    elif stype == 'std':
-        # Convert image to numpy array
-        img_array = np.array(p)
-
-        # Calculate mean and standard deviation of pixel values
-        mean = np.mean(img_array)
-        std = np.std(img_array)
-
-        # Define lower and upper bounds based on standard deviation
-        lower_bound = mean - (std * factor)
-        upper_bound = mean + (std * factor)
-
-        # Perform standard deviation stretch
-        sp = (img_array - lower_bound) * (255 / (upper_bound - lower_bound))
-        sp = np.clip(sp, 0, 255)
-    elif stype == 'mad':
-        # Convert image to numpy array
-        img_array = np.array(p)
-
-        # Calculate median and median absolute deviation of pixel values
-        median = np.median(img_array)
-        mad = np.median(np.abs(img_array - median))
-
-        # Define lower and upper bounds based on standard deviation
-        lower_bound = median - (mad * factor)
-        upper_bound = median + (mad * factor)
-
-        # Perform standard deviation stretch
-        sp = (img_array - lower_bound) * (255 / (upper_bound - lower_bound))
-        sp = np.clip(sp, 0, 255)
-
-    return sp
-
-def stretchNBands(img, stype = 'linear', perc=2, factor=2.5):
-    """stretch multiple bands using stretchBand
-
-    Args:
-        img (multiband array): typically a 3-band browse product array
-        stype (str, optional): stretch type. Defaults to 'linear'.
-        perc (int, optional): percentage for percent stretch. Defaults to 2.
-        factor (float, optional): number of standard deviations in std stretch. Defaults to 2.5.
-
-    Returns:
-        img2 (multiband array): stretch image array
-    """
-    img2=img
-    n = np.shape(img)[2]
-    for b in range(n):
-        img2[:,:,b]=stretchBand(img[:,:,b], stype=stype, perc=perc, factor=factor)
-    return img2
-
-def cropZeros(p):
-    """crops values below zero in an array
-
-    Args:
-        p (array): 2d image array
-
-    Returns:
-        (array): array with values below zero set to zero
-    """
-    return np.where(p<0,0.0,p)
-
-def cropNZeros(img):
-    """crops values below zero in a multiband array using cropZeros
-
-    Args:
-        img (multiband array): typically a 3-band browse product image
-
-    Returns:
-        img2: cropped multiband array
-    """
-    img2=img
-    n=np.shape(img)[2]
-    for b in range(n):
-        img2[:,:,b] = cropZeros(img[:,:,b])
-    return img2
+    return np.nan_to_num(B, nan=0.0).astype(np.uint8)
 
 
-# -------------------------------------------------------------------------
-# point spectra utility functions
-# -------------------------------------------------------------------------                
-import pandas as pd
-import numpy as np
+def buildSummary(p1, p2, p3):
+    return np.dstack((p1, p2, p3))
 
+
+# ----------------------------------------------------------------
+# point-spectrum helpers and file readers (unchanged from 0.2.x)
+# ----------------------------------------------------------------
 def getRvalue(spectrum, wvt, wl, kwidth=5):
     """
     Returns the R value of a given spectrum at a specified wavelength.
@@ -493,10 +100,11 @@ def getRvalue(spectrum, wvt, wl, kwidth=5):
             min_index = 0
         if bindex + w > len(spectrum) - 1:
             max_index = len(spectrum) - 1
-        r = np.median(spectrum.iloc[int(min_index):int(max_index)])
+        r = np.median(spectrum.iloc[int(min_index) : int(max_index)])
     return r
 
-def getRvalueDepth(spectrum, wvt,low,mid,hi,lw=5,mw=5,hw=5):
+
+def getRvalueDepth(spectrum, wvt, low, mid, hi, lw=5, mw=5, hw=5):
     """
     Compute the band depth using precomputed a and b.
 
@@ -516,19 +124,20 @@ def getRvalueDepth(spectrum, wvt,low,mid,hi,lw=5,mw=5,hw=5):
     # retrieve bands from spectrum
     Rlow = getRvalue(spectrum, wvt, low, kwidth=lw)
     Rmid = getRvalue(spectrum, wvt, mid, kwidth=mw)
-    Rhi  = getRvalue(spectrum, wvt, hi, kwidth=hw)
-    
+    Rhi = getRvalue(spectrum, wvt, hi, kwidth=hw)
+
     # determine wavelengths for low, mid, hi
-    WL = getClosestWavelength(low,wvt)
-    WM = getClosestWavelength(mid,wvt)
-    WH = getClosestWavelength(hi,wvt)
-    
-    a = (WM-WL)/(WH-WL)     #a gets multipled by the longer band
-    b = 1.0-a               #b gets multiplied by the shorter band
-    
+    WL = getClosestWavelength(low, wvt)
+    WM = getClosestWavelength(mid, wvt)
+    WH = getClosestWavelength(hi, wvt)
+
+    a = (WM - WL) / (WH - WL)  # a gets multipled by the longer band
+    b = 1.0 - a  # b gets multiplied by the shorter band
+
     # compute the band depth using precomputed a and b
-    paramValue = 1.0 - (Rmid/(b*Rlow + a*Rhi))
+    paramValue = 1.0 - (Rmid / (b * Rlow + a * Rhi))
     return paramValue
+
 
 def getRvalueDepthInvert(spectrum, wvt, low, mid, hi, lw=5, mw=5, hw=5):
     """
@@ -548,22 +157,23 @@ def getRvalueDepthInvert(spectrum, wvt, low, mid, hi, lw=5, mw=5, hw=5):
         float: The computed band depth.
     """
     # retrieve bands from spectrum
-    Rlow = getRvalue(spectrum,wvt,low,kwidth=lw)
-    Rmid = getRvalue(spectrum,wvt,mid,kwidth=mw)
-    Rhi  = getRvalue(spectrum,wvt,hi,kwidth=hw)
+    Rlow = getRvalue(spectrum, wvt, low, kwidth=lw)
+    Rmid = getRvalue(spectrum, wvt, mid, kwidth=mw)
+    Rhi = getRvalue(spectrum, wvt, hi, kwidth=hw)
 
     # determine wavelength values for closest channels
-    WL = getClosestWavelength(low,wvt)
-    WM = getClosestWavelength(mid,wvt)
-    WH = getClosestWavelength(hi,wvt)
-    a = (WM-WL)/(WH-WL)     # a gets multipled by the longer band
-    b = 1.0-a               # b gets multiplied by the shorter band
+    WL = getClosestWavelength(low, wvt)
+    WM = getClosestWavelength(mid, wvt)
+    WH = getClosestWavelength(hi, wvt)
+    a = (WM - WL) / (WH - WL)  # a gets multipled by the longer band
+    b = 1.0 - a  # b gets multiplied by the shorter band
 
     # compute the band depth using precomputed a and b
-    paramValue = 1.0 - ((b*Rlow + a*Rhi)/Rmid)
+    paramValue = 1.0 - ((b * Rlow + a * Rhi) / Rmid)
     if paramValue is -np.inf:
         paramValue = np.nan
     return paramValue
+
 
 def getRvalueRatio(spectrum, wvt, num_l, denom_l, num_w=5, denom_w=5):
     """
@@ -587,6 +197,7 @@ def getRvalueRatio(spectrum, wvt, num_l, denom_l, num_w=5, denom_w=5):
         paramValue = np.nan
     return paramValue
 
+
 def getRvalueArea(spec, wvt, low, high, lw=5, hw=5):
     """retrieve band area
 
@@ -607,21 +218,24 @@ def getRvalueArea(spec, wvt, low, high, lw=5, hw=5):
     y2 = getRvalue(spec, wvt, high, kwidth=hw)
     delta = [q - high for q in wvt]
     x2 = int(delta.index(min(delta, key=abs)))
-    woi_ = np.linspace(wvt.iloc[x1],wvt.iloc[x2],int(wvt.iloc[x2]-wvt.iloc[x1]+1),dtype=int).tolist()
+    woi_ = np.linspace(
+        wvt.iloc[x1], wvt.iloc[x2], int(wvt.iloc[x2] - wvt.iloc[x1] + 1), dtype=int
+    ).tolist()
     woi = [wvt.sub(w).abs().idxmin() for w in woi_]
     # remove duplicates from woi
     woi = list(dict.fromkeys(woi))
-    wol = [wvt.iloc[w]for w in woi]
+    wol = [wvt.iloc[w] for w in woi]
     x1 = wol[0]
     x2 = wol[-1]
-    m = (y2-y1)/(x2-x1) #m is the slope at all pixels
-    b = y2-m*x2         #b is the intercept at all pixels
-    h = [getRvalue(spec, wvt, wvt[i], kwidth=1) - (m*wvt[i]+b) for i in woi]
-    ba = -0.001*getCubicSplineIntegral((wol, h))
+    m = (y2 - y1) / (x2 - x1)  # m is the slope at all pixels
+    b = y2 - m * x2  # b is the intercept at all pixels
+    h = [getRvalue(spec, wvt, wvt[i], kwidth=1) - (m * wvt[i] + b) for i in woi]
+    ba = -0.001 * getCubicSplineIntegral((wol, h))
     return ba
 
+
 def getRvalueMin(spec, wvt, low, high, lw=5, hw=5):
-    """retrieve minimum value of an absorption band 
+    """retrieve minimum value of an absorption band
 
     Args:
         spec (array): pandas df of spectrum
@@ -632,7 +246,7 @@ def getRvalueMin(spec, wvt, low, high, lw=5, hw=5):
         hw (int, optional): high wavelength median filter kernel width. Defaults to 5.
 
     Returns:
-        (array): minimum value of an absorption band 
+        (array): minimum value of an absorption band
     """
     y1 = getRvalue(spec, wvt, low, kwidth=lw)
     delta = [q - low for q in wvt]
@@ -640,22 +254,24 @@ def getRvalueMin(spec, wvt, low, high, lw=5, hw=5):
     y2 = getRvalue(spec, wvt, high, kwidth=hw)
     delta = [q - high for q in wvt]
     x2 = int(delta.index(min(delta, key=abs)))
-    woi_ = np.linspace(wvt.iloc[x1],wvt.iloc[x2],int(wvt.iloc[x2]-wvt.iloc[x1]+1),dtype=int).tolist()
+    woi_ = np.linspace(
+        wvt.iloc[x1], wvt.iloc[x2], int(wvt.iloc[x2] - wvt.iloc[x1] + 1), dtype=int
+    ).tolist()
     woi = [wvt.sub(w).abs().idxmin() for w in woi_]
     # remove duplicates from woi
     woi = list(dict.fromkeys(woi))
-    wol = [wvt.iloc[w]for w in woi]
+    wol = [wvt.iloc[w] for w in woi]
     x1 = wol[0]
     x2 = wol[-1]
-    m = (y2-y1)/(x2-x1) #m is the slope at all pixels
-    b = y2-m*x2         #b is the intercept at all pixels
+    m = (y2 - y1) / (x2 - x1)  # m is the slope at all pixels
+    b = y2 - m * x2  # b is the intercept at all pixels
     # s0, s1 = y1.shape
     # s2 = len(woi)
-    y = m*np.array(wol)+b
-    h = [getRvalue(spec, wvt, wvt[i], kwidth=1) - (m*wvt[i]+b) for i in woi]
+    y = m * np.array(wol) + b
+    h = [getRvalue(spec, wvt, wvt[i], kwidth=1) - (m * wvt[i] + b) for i in woi]
 
     # Fit a cubic spline using wol and h
-    cs_ = cs(wol, h)# Find the minimum y value using optimization
+    cs_ = cs(wol, h)  # Find the minimum y value using optimization
 
     # ----------------------------------------------------------------
     # option 1
@@ -670,7 +286,7 @@ def getRvalueMin(spec, wvt, low, high, lw=5, hw=5):
     min_y_index = np.argmin(y_finer)
 
     # The x value at the minimum y value
-    x_at_min_y = 0.001*x_finer[min_y_index]
+    x_at_min_y = 0.001 * x_finer[min_y_index]
     # ----------------------------------------------------------------
     # option 2
 
@@ -683,11 +299,12 @@ def getRvalueMin(spec, wvt, low, high, lw=5, hw=5):
 
     # # The x value corresponding to the minimum y value
     # x_at_min_y = 0.001*result.x
-    
+
     return x_at_min_y
 
+
 def getRvalueFWHM(spec, wvt, low, high, lw=5, hw=5):
-    """retrieve minimum value of an absorption band 
+    """retrieve minimum value of an absorption band
 
     Args:
         spec (array): pandas df of spectrum
@@ -698,7 +315,7 @@ def getRvalueFWHM(spec, wvt, low, high, lw=5, hw=5):
         hw (int, optional): high wavelength median filter kernel width. Defaults to 5.
 
     Returns:
-        (array): minimum value of an absorption band 
+        (array): minimum value of an absorption band
     """
     y1 = getRvalue(spec, wvt, low, kwidth=lw)
     delta = [q - low for q in wvt]
@@ -706,26 +323,28 @@ def getRvalueFWHM(spec, wvt, low, high, lw=5, hw=5):
     y2 = getRvalue(spec, wvt, high, kwidth=hw)
     delta = [q - high for q in wvt]
     x2 = int(delta.index(min(delta, key=abs)))
-    woi_ = np.linspace(wvt.iloc[x1],wvt.iloc[x2],int(wvt.iloc[x2]-wvt.iloc[x1]+1),dtype=int).tolist()
+    woi_ = np.linspace(
+        wvt.iloc[x1], wvt.iloc[x2], int(wvt.iloc[x2] - wvt.iloc[x1] + 1), dtype=int
+    ).tolist()
     woi = [wvt.sub(w).abs().idxmin() for w in woi_]
     # remove duplicates from woi
     woi = list(dict.fromkeys(woi))
-    wol = [wvt.iloc[w]for w in woi]
+    wol = [wvt.iloc[w] for w in woi]
     x1 = wol[0]
     x2 = wol[-1]
-    m = (y2-y1)/(x2-x1) #m is the slope at all pixels
-    b = y2-m*x2         #b is the intercept at all pixels
+    m = (y2 - y1) / (x2 - x1)  # m is the slope at all pixels
+    b = y2 - m * x2  # b is the intercept at all pixels
     # s0, s1 = y1.shape
     # s2 = len(woi)
-    y = m*np.array(wol)+b
-    h = [getRvalue(spec, wvt, wvt[i], kwidth=1) - (m*wvt[i]+b) for i in woi]
+    y = m * np.array(wol) + b
+    h = [getRvalue(spec, wvt, wvt[i], kwidth=1) - (m * wvt[i] + b) for i in woi]
 
     # Fit a cubic spline using wol and h
-    cs_ = cs(wol, h)# Find the minimum y value using optimization
+    cs_ = cs(wol, h)  # Find the minimum y value using optimization
 
     # ----------------------------------------------------------------
     # option 1
-    
+
     # Generate a finer mesh of x values
     x_finer = np.linspace(min(wol), max(wol), 1000)  # Change 1000 to the desired number of points
 
@@ -753,7 +372,7 @@ def getRvalueFWHM(spec, wvt, low, high, lw=5, hw=5):
     # y_min = result.fun
 
     # calculate the full width half maximum of the band defined by wol and h
-    half_max = y_min/2
+    half_max = y_min / 2
     peak_index = np.argmin(np.abs(h - y_min))
 
     # Find the indices where the intensity is closest to half of the maximum intensity
@@ -762,11 +381,12 @@ def getRvalueFWHM(spec, wvt, low, high, lw=5, hw=5):
         right_index = np.argmin(np.abs(h[peak_index:] - half_max)) + peak_index
 
         # Calculate the FWHM
-        fwhm = 0.001*(wol[right_index] - wol[left_index])
+        fwhm = 0.001 * (wol[right_index] - wol[left_index])
     except:
         fwhm = np.nan
-    
+
     return fwhm
+
 
 def getRvalueAsymmetry(spec, wvt, low, high, lw=5, hw=5):
     """retrieve band asymmetry
@@ -780,7 +400,7 @@ def getRvalueAsymmetry(spec, wvt, low, high, lw=5, hw=5):
         hw (int, optional): high wavelength median filter kernel width. Defaults to 5.
 
     Returns:
-        (array): band asymmetry value 
+        (array): band asymmetry value
     """
     y1 = getRvalue(spec, wvt, low, kwidth=lw)
     delta = [q - low for q in wvt]
@@ -788,24 +408,26 @@ def getRvalueAsymmetry(spec, wvt, low, high, lw=5, hw=5):
     y2 = getRvalue(spec, wvt, high, kwidth=hw)
     delta = [q - high for q in wvt]
     x2 = int(delta.index(min(delta, key=abs)))
-    woi_ = np.linspace(wvt.iloc[x1],wvt.iloc[x2],int(wvt.iloc[x2]-wvt.iloc[x1]+1),dtype=int).tolist()
+    woi_ = np.linspace(
+        wvt.iloc[x1], wvt.iloc[x2], int(wvt.iloc[x2] - wvt.iloc[x1] + 1), dtype=int
+    ).tolist()
     woi = [wvt.sub(w).abs().idxmin() for w in woi_]
     # remove duplicates from woi
     woi = list(dict.fromkeys(woi))
-    wol = [wvt.iloc[w]for w in woi]
+    wol = [wvt.iloc[w] for w in woi]
     x1 = wol[0]
     x2 = wol[-1]
-    m = (y2-y1)/(x2-x1) #m is the slope at all pixels
-    b = y2-m*x2         #b is the intercept at all pixels
-    y = m*np.array(wol)+b
-    h = [getRvalue(spec, wvt, wvt[i], kwidth=1) - (m*wvt[i]+b) for i in woi]
+    m = (y2 - y1) / (x2 - x1)  # m is the slope at all pixels
+    b = y2 - m * x2  # b is the intercept at all pixels
+    y = m * np.array(wol) + b
+    h = [getRvalue(spec, wvt, wvt[i], kwidth=1) - (m * wvt[i] + b) for i in woi]
 
     # Fit a cubic spline using wol and h
-    cs_ = cs(wol, h)# Find the minimum y value using optimization
+    cs_ = cs(wol, h)  # Find the minimum y value using optimization
 
     # ----------------------------------------------------------------
     # option 1
-    
+
     # Generate a finer mesh of x values
     x_finer = np.linspace(min(wol), max(wol), 1000)  # Change 1000 to the desired number of points
 
@@ -836,20 +458,21 @@ def getRvalueAsymmetry(spec, wvt, low, high, lw=5, hw=5):
     peak_index = np.argmin(np.abs(h - y_min))
 
     # calculate the band area
-    ba = -0.001*getCubicSplineIntegral((wol, h))
+    ba = -0.001 * getCubicSplineIntegral((wol, h))
 
     # calculate band area to the left of the band center
-    ba_left = -0.001*getCubicSplineIntegral((wol[:peak_index], h[:peak_index]))
+    ba_left = -0.001 * getCubicSplineIntegral((wol[:peak_index], h[:peak_index]))
 
     # calculate band area to the right of the band center
-    ba_right = -0.001*getCubicSplineIntegral((wol[peak_index:], h[peak_index:]))
+    ba_right = -0.001 * getCubicSplineIntegral((wol[peak_index:], h[peak_index:]))
 
-    basym = np.log10(ba_right/ba_left)
+    basym = np.log10(ba_right / ba_left)
     # basym = (ba_right-ba_left)/ba
 
     return basym
 
-def getRSlope(spec, wvt, low, high, kwidth = 5):
+
+def getRSlope(spec, wvt, low, high, kwidth=5):
     """retrieve slope
 
     Args:
@@ -866,10 +489,12 @@ def getRSlope(spec, wvt, low, high, kwidth = 5):
     x1 = getClosestWavelength(low, wvt)
     y2 = getRvalue(spec, wvt, high, kwidth=kwidth)
     x2 = getClosestWavelength(high, wvt)
-    m = (y2-y1)/(x2-x1) #m is the slope 
+    m = (y2 - y1) / (x2 - x1)  # m is the slope
     # nmin = np.nanmin(np.where(m>-np.inf,m,np.nan))
     # s = np.where(m>-np.inf,m,nmin)
     return m
+
+
 # ----------------------------------------------------------------
 # read info from .sed files
 # ----------------------------------------------------------------
@@ -883,23 +508,24 @@ def getReflectanceFromSed(sedFile):
     Returns:
         tuple: A tuple containing two lists - the wavelength data and the reflectance data.
     """
-    with open(sedFile, 'r') as lf:
+    with open(sedFile) as lf:
         sedInfo = np.array([line[:-1] for line in lf.readlines()])
-    wvl=[]
-    refl=[]
+    wvl = []
+    refl = []
     i = 0
     # get index where data start
     for line in sedInfo:
-        if line.__contains__('Wvl'):
-            idx = i+1
-        i = i+1
+        if line.__contains__("Wvl"):
+            idx = i + 1
+        i = i + 1
     # get data
     info = sedInfo[idx:]
     for line in info:
-        b, r = line.split('\t')
+        b, r = line.split("\t")
         wvl.append(float(b))
         refl.append(float(r))
-    return wvl,refl
+    return wvl, refl
+
 
 def getSedFiles(sedPath):
     """
@@ -913,23 +539,23 @@ def getSedFiles(sedPath):
     """
     i = 0
     for file in glob.glob(sedPath):
-        h = file.split('/')
+        h = file.split("/")
         name = h[-1]
         wvl, r = getReflectanceFromSed(file)
         if i == 0:
-            initialDict = {'Wavelength': wvl,
-             name: r}
+            initialDict = {"Wavelength": wvl, name: r}
             df = pd.DataFrame(initialDict)
         else:
             df[name] = r
-        i=i+1
+        i = i + 1
     return df
+
 
 # ----------------------------------------------------------------
 # read files from USGS speclib07
 # ----------------------------------------------------------------
 # These functions are for reading files downloaded from the USGS splib07a library of reflectance spectra
-# Input is a path to the reflectance .txt file. Output is a pandas.DataFrame of the wavelength values and 
+# Input is a path to the reflectance .txt file. Output is a pandas.DataFrame of the wavelength values and
 # reflectance values.
 def getReflectanceFromUSGS(usgsFile):
     """
@@ -941,17 +567,18 @@ def getReflectanceFromUSGS(usgsFile):
     Returns:
     list: A list containing the reflectance values from the USGS file.
     """
-    with open(usgsFile, 'r') as lf:
+    with open(usgsFile) as lf:
         fileInfo = np.array([line[:-1] for line in lf.readlines()])
     # get data
     refl = fileInfo[1:]
     refl = [float(i) for i in refl]
     for value in refl:
-        if value<0:
+        if value < 0:
             i = refl.index(value)
             refl[i] = np.nan
-            refl[i] = np.nanmean(refl[(i-1):(i+1)])
+            refl[i] = np.nanmean(refl[(i - 1) : (i + 1)])
     return refl
+
 
 def getWavelengthFromUSGS(usgsFile):
     """
@@ -963,15 +590,16 @@ def getWavelengthFromUSGS(usgsFile):
     Returns:
     list: A list containing the wavelength values from the USGS file converted to nm.
     """
-    with open(glob.glob(usgsFile)[0], 'r') as lf:
+    with open(glob.glob(usgsFile)[0]) as lf:
         fileInfo = np.array([line[:-1] for line in lf.readlines()])
     # get data
-    wvl = fileInfo[1:] #convert to nm
-    wvl = [float(i)*1000 for i in wvl]
+    wvl = fileInfo[1:]  # convert to nm
+    wvl = [float(i) * 1000 for i in wvl]
     for value in wvl:
         if value < 0:
             wvl[wvl.index(value)] = np.nan
     return wvl
+
 
 def getSpecFiles(usgsPath):
     """
@@ -986,18 +614,16 @@ def getSpecFiles(usgsPath):
     """
     i = 0
     for file in glob.glob(usgsPath):
-        h = file.split('/')
+        h = file.split("/")
         name = h[-1]
-        usgsWvlPath = '/'.join(h[:-1])+'/splib07a_Wavelengths*.txt'
+        usgsWvlPath = "/".join(h[:-1]) + "/splib07a_Wavelengths*.txt"
         print(usgsWvlPath)
         wvl = getWavelengthFromUSGS(usgsWvlPath)
         r = getReflectanceFromUSGS(file)
         if i == 0:
-            initialDict = {'Wavelength': wvl,
-             name: r}
+            initialDict = {"Wavelength": wvl, name: r}
             df = pd.DataFrame(initialDict)
         else:
             df[name] = r
-        i=i+1
+        i = i + 1
     return df
-

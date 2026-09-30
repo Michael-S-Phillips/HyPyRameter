@@ -20,7 +20,6 @@ import timeit
 import itertools
 # import matplotlib
 # matplotlib.use('Qt5Agg')
-import matplotlib.pyplot as plt
 # import matlab.engine
 from outliers import smirnov_grubbs as grubbs
 from spectral import envi
@@ -28,7 +27,27 @@ from scipy import signal, interpolate
 # from utils import img_cube
 from hypyrameter.iovf_generic_utils import run_vote_block
 from tqdm import tqdm
-from IPython.display import clear_output
+
+
+def clear_output(wait=True):
+    """Clear a notebook cell's output when running under IPython; no-op elsewhere."""
+    try:
+        from IPython.display import clear_output as _clear
+    except ImportError:
+        return
+    _clear(wait=wait)
+
+
+class _LazyPyplot:
+    """matplotlib.pyplot, imported on first use (only view_votes needs it)."""
+
+    def __getattr__(self, name):
+        import matplotlib.pyplot as plt
+
+        return getattr(plt, name)
+
+
+plt = _LazyPyplot()
 
 class iovf:
     '''
