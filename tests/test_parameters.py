@@ -183,3 +183,67 @@ def test_bdi1000vis_is_the_integrated_band_depth_below_the_peak(wavelengths):
     fine = np.linspace(833.0, 1023.0, 2001)
     depth = 0.1 * np.exp(-0.5 * ((fine - 1000.0) / 100.0) ** 2)
     assert out[0] == pytest.approx(np.trapezoid(depth, fine / 1000.0), rel=0.05)
+
+
+@pytest.fixture
+def long_wavelengths():
+    """CRISM's MTRDR range, 436-3920 nm every 6.55 nm."""
+    return np.arange(436.0, 3925.0, 6.55)
+
+
+# The CRISM parameters added in 0.4.0 (CRISM Data Product SIS, Table 3-12;
+# Viviano-Beck et al. 2014): a featureless spectrum gives 0
+NEW = ["SH600_2", "BD1435", "BD1500_2", "ISLOPE1", "BD2500_2", "BD3000", "CINDEX2"]
+
+
+def test_the_new_crism_parameters_are_zero_without_their_feature(long_wavelengths):
+    flat = np.full(long_wavelengths.size, 0.3)
+    out = compute(flat, long_wavelengths, NEW)
+    np.testing.assert_allclose(out, 0.0, atol=1e-9)
+
+
+@pytest.mark.parametrize(
+    ("name", "centre", "absorbing"),
+    [
+        ("BD1435", 1435.0, True),
+        ("BD1500_2", 1525.0, True),
+        ("BD2500_2", 2480.0, True),
+        ("BD3000", 3000.0, True),
+        ("SH600_2", 600.0, False),  # a shoulder: higher than its neighbors
+    ],
+)
+def test_the_new_crism_parameters_see_their_feature(long_wavelengths, name, centre, absorbing):
+    depth = 0.2 if absorbing else -0.2
+    spectrum = 0.3 * gaussian_absorption(long_wavelengths, centre, depth, 25.0)
+    value = compute(spectrum, long_wavelengths, [name])[0]
+    assert value > 0.05, (name, value)
+
+
+def test_cindex2_sees_the_convexity_between_two_carbonate_bands(long_wavelengths):
+    spectrum = (
+        0.3
+        * gaussian_absorption(long_wavelengths, 3450.0, 0.2, 60.0)
+        * gaussian_absorption(long_wavelengths, 3875.0, 0.2, 60.0)
+    )
+    assert compute(spectrum, long_wavelengths, ["CINDEX2"])[0] > 0.05
+
+
+def test_islope1_is_the_crism_name_of_islope(long_wavelengths):
+    sloped = 0.2 + 0.0001 * (long_wavelengths - 1000.0)
+    out = compute(sloped, long_wavelengths, ["ISLOPE1", "ISLOPE"])
+    assert out[0] == pytest.approx(out[1])
+    # (R1815 - R2530) / (W2530 - W1815), wavelengths in µm
+    assert out[0] == pytest.approx(-0.1, rel=0.01)
+
+
+def test_the_browse_reflectances_use_the_sis_kernels(long_wavelengths):
+    for name in ("R440", "R530", "R600", "R770", "R1330", "R3920"):
+        assert name in PARAMETERS
+    spike = np.full(long_wavelengths.size, 0.3)
+    nearest = int(np.argmin(np.abs(long_wavelengths - 1330.0)))
+    spike[nearest - 4 : nearest + 5] = 0.6  # 9 of IRA's 11 bands
+    # an 11-band median sees mostly the spike; a 5-band one would see only it
+    assert compute(spike, long_wavelengths, ["R1330"])[0] == pytest.approx(0.6)
+    spike[nearest - 4 : nearest - 1] = 0.3
+    spike[nearest + 2 : nearest + 5] = 0.3  # now only 3 of 11
+    assert compute(spike, long_wavelengths, ["R1330"])[0] == pytest.approx(0.3)

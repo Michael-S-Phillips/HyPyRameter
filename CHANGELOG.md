@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.4.0 — 2026-10-23
+
+### Added
+- The CRISM summary parameters the browse products need, as the CRISM Data
+  Product SIS (Table 3-12) and Viviano-Beck et al. (2014) define them:
+  `SH600_2` (600 nm shoulder height), `BD1435` (CO2 ice), `BD1500_2` (H2O
+  ice), `BD2500_2` (Mg-carbonate overtone), `BD3000` (3 µm H2O band,
+  allowing for the slope), `CINDEX2` (3.6 µm carbonate convexity) and
+  `ISLOPE1` (the CRISM name of `ISLOPE`), with the SIS's kernel widths.
+  Against the PDS browse products of the CRISM MTRDR FRT000047A3 they are
+  0.94–1.01 × CRISM's values (r = 0.90–0.99).
+- Reflectances `R440`, `R530`, `R600`, `R770`, `R1330` (11-band median, as
+  the SIS's IRA) and `R3920`.
+- The browse products VNA, FEM, IRA, ICE, IC2, CHL, CAR and TAN, so all 18
+  CRISM MTRDR browse products are defined.
+
+### Changed
+- **The CRISM browse products are defined as the PDS defines them** (the
+  channels the MTRDR browse products' labels name): `TRU` is R600, R530,
+  R440 (was R637, R550, R463); `PHY` is D2300, D2200, BD1900r2 (red and
+  green were swapped); `CR2`'s blue is CINDEX2 (was BDCARB). HyPyRameter's
+  own products (BIO, FM3, HEM, HYD2, HYD3, PLG, SED, SUL) are unchanged.
+
 ## 0.3.1 — 2026-10-23
 
 ### Fixed

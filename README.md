@@ -57,6 +57,13 @@ rgb = browse_image(layers, "PHY")                   # (rows, cols, 3) uint8
 write_browse_products(layers, "browse/")            # a PNG per valid product
 ```
 
+`BROWSE_PRODUCTS` holds the 18 CRISM MTRDR browse products with the channels
+the PDS products' labels name (CRISM Data Product SIS, §3.12.3; Viviano-Beck
+et al. 2014): TRU, VNA, FEM, FM2, FAL, IRA, MAF, HYD, PHY, PFM, PAL, HYS,
+ICE, IC2, CHL, CAR, CR2 and TAN; and HyPyRameter's own BIO, FM3, HEM, HYD2,
+HYD3, PLG, SED and SUL. `browse_image` stretches each channel by the scene's
+statistics (`stretch`), not by the PDS products' fixed ranges.
+
 ### The 0.2.x classes
 
 `cubeParamCalculator` and `pointParamCalculator` still exist as thin wrappers
@@ -80,12 +87,18 @@ Both accept `parameters=[...]` to compute a subset. See the notebooks in
 
 | Parameter | Range (nm) | Description |
 |---|---|---|
+| `R440` | 440–440 | Reflectance at 440 nm (5-band median) |
 | `R463` | 463–463 | Reflectance at 463 nm (5-band median) |
+| `R530` | 530–530 | Reflectance at 530 nm (5-band median) |
 | `R550` | 550–550 | Reflectance at 550 nm (5-band median) |
+| `R600` | 600–600 | Reflectance at 600 nm (5-band median) |
 | `R637` | 637–637 | Reflectance at 637 nm (5-band median) |
+| `R770` | 770–770 | Reflectance at 770 nm (5-band median) |
 | `R1080` | 1080–1080 | Reflectance at 1080 nm (5-band median) |
+| `R1330` | 1330–1330 | Reflectance at 1330 nm (11-band median) |
 | `R1506` | 1506–1506 | Reflectance at 1506 nm (5-band median) |
 | `R2529` | 2529–2529 | Reflectance at 2529 nm (5-band median) |
+| `R3920` | 3920–3920 | Reflectance at 3920 nm (5-band median) |
 | `HCPINDEX2` | 1690–2530 | High-calcium pyroxene index: weighted continuum-relative depths between 2120 and 2460 nm (continuum 1690-2530 nm) |
 | `LCPINDEX2` | 1560–2450 | Low-calcium pyroxene index: weighted continuum-relative depths between 1690 and 1870 nm (continuum 1560-2450 nm) |
 | `OLINDEX3` | 1210–1862 | Olivine index: weighted continuum-relative depths between 1210 and 1330 nm (continuum 1750-1862 nm) |
@@ -116,11 +129,15 @@ Both accept `parameters=[...]` to compute a subset. See the notebooks in
 | `BD2443` | 2320–2480 | 2443 nm band depth (nitrate) |
 | `BD2355` | 2300–2450 | 2355 nm band depth (Fe/Mg phyllosilicates) |
 | `BD2600` | 2530–2630 | 2600 nm band depth (H2O) |
+| `BD1435` | 1370–1470 | 1435 nm band depth (CO2 ice, some hydrated minerals) |
+| `BD1500_2` | 1367–1808 | 1525 nm band depth (H2O ice) |
+| `BD2500_2` | 2364–2570 | 2480 nm band depth (Mg-carbonate overtone) |
 | `BD1900r2` | 1815–2132 | 1900 nm band depth, ratio form: mean continuum-relative reflectance at 1908-1941 nm over that at 1862-1875 and 2112-2126 nm (continuum 1815-2132 nm) |
 | `BDCARB` | 2230–2600 | Carbonate band depth: geometric mean of the 2330 and 2530 nm band depths |
 | `BA1200` | 1115–1260 | 1200 nm band area |
 | `BA1450` | 1340–1535 | 1450 nm band area |
 | `BA1900` | 1850–2067 | 1900 nm band area |
+| `SH600_2` | 533–716 | 600 nm shoulder height: 1 - continuum (533-716 nm) / R600 (select ferric minerals) |
 | `SH460` | 420–520 | 460 nm shoulder height (inverted band depth) |
 | `D460` | 420–520 | Alias of SH460 (point-spectra name) |
 | `D700` | 630–830 | 700 nm drop-off (chlorophyll red edge): continuum-relative 690-720 nm over 740-770 nm (continuum 630-830 nm) |
@@ -136,6 +153,9 @@ Both accept `parameters=[...]` to compute a subset. See the notebooks in
 | `SLOPE420_500` | 420–500 | Spectral slope 420-500 nm (reflectance per µm); >5 suggests elemental sulfur |
 | `SLOPE1815_2530` | 1815–2530 | Spectral slope 1815-2530 nm (reflectance per µm) |
 | `ISLOPE` | 1815–2530 | Inverse spectral slope 1815-2530 nm: -SLOPE1815_2530 (point-spectra name) |
+| `ISLOPE1` | 1815–2530 | Spectral slope 1: (R1815 - R2530) / (W2530 - W1815), wavelengths in µm (ferric coating on dark rock); the CRISM name of ISLOPE |
+| `BD3000` | 2210–3000 | 3 µm H2O band depth: 1 - R3000 / (R2530 x R2530 / R2210), allowing for the spectral slope (bound H2O) |
+| `CINDEX2` | 3450–3875 | Carbonate index: 1 - continuum (3450-3875 nm) / R3610, the convexity at 3.6 µm between the 3.4 and 3.9 µm carbonate bands |
 | `BR800` | 800–997 | Band ratio R800 / R997 |
 | `BR2530` | 2210–2530 | Band ratio R2530 / R2210 |
 | `IRR2` | 2210–2530 | Alias of BR2530 (point-spectra name) |

@@ -157,14 +157,34 @@ def _fmin(*arrays: np.ndarray) -> np.ndarray:
 
 # --- reflectance --------------------------------------------------------------
 
-for _wl in (463, 550, 637, 1080, 1506, 2529):
+# The CRISM browse products' reflectances take the kernel widths of the CRISM
+# Data Product SIS, Table 3-12 (IRA's R1330: 11 bands); the others are 5 bands
+_REFLECTANCE_WIDTHS = {
+    440: 5,
+    463: 5,
+    530: 5,
+    550: 5,
+    600: 5,
+    637: 5,
+    770: 5,
+    1080: 5,
+    1330: 11,
+    1506: 5,
+    2529: 5,
+    3920: 5,
+}
 
-    def _reflectance(s: Spectra, wl=_wl) -> np.ndarray:
-        return s.R(wl)
+for _wl, _width in _REFLECTANCE_WIDTHS.items():
 
-    parameter(f"R{_wl}", (_wl, _wl), f"Reflectance at {_wl} nm (5-band median)", "Reflectance")(
-        _reflectance
-    )
+    def _reflectance(s: Spectra, wl=_wl, width=_width) -> np.ndarray:
+        return s.R(wl, width)
+
+    parameter(
+        f"R{_wl}",
+        (_wl, _wl),
+        f"Reflectance at {_wl} nm ({_width}-band median)",
+        "Reflectance",
+    )(_reflectance)
 
 
 # --- indices ------------------------------------------------------------------
@@ -334,6 +354,24 @@ _BAND_DEPTHS = {
     "BD2443": ((2320, 2480), 2320, 2443, 2480, {}, "2443 nm band depth (nitrate)"),
     "BD2355": ((2300, 2450), 2300, 2355, 2450, {}, "2355 nm band depth (Fe/Mg phyllosilicates)"),
     "BD2600": ((2530, 2630), 2530, 2600, 2630, {}, "2600 nm band depth (H2O)"),
+    # CRISM Data Product SIS, Table 3-12 (Viviano-Beck et al. 2014)
+    "BD1435": (
+        (1370, 1470),
+        1370,
+        1435,
+        1470,
+        {"lw": 3, "mw": 1, "hw": 3},
+        "1435 nm band depth (CO2 ice, some hydrated minerals)",
+    ),
+    "BD1500_2": ((1367, 1808), 1367, 1525, 1808, {"mw": 11}, "1525 nm band depth (H2O ice)"),
+    "BD2500_2": (
+        (2364, 2570),
+        2364,
+        2480,
+        2570,
+        {},
+        "2480 nm band depth (Mg-carbonate overtone)",
+    ),
 }
 
 for _name, (_bounds, _low, _mid, _hi, _widths, _description) in _BAND_DEPTHS.items():
@@ -397,6 +435,16 @@ for _name, _low, _high, _description in (
 
 
 # --- shoulders and drop-offs ---------------------------------------------------
+
+
+@parameter(
+    "SH600_2",
+    (533, 716),
+    "600 nm shoulder height: 1 - continuum (533-716 nm) / R600 (select ferric minerals)",
+    "Shoulder",
+)
+def SH600_2(s: Spectra) -> np.ndarray:
+    return band_depth_invert(s, 533, 600, 716, lw=5, mw=5, hw=3)
 
 
 @parameter("SH460", (420, 520), "460 nm shoulder height (inverted band depth)", "Shoulder")
@@ -579,6 +627,40 @@ def SLOPE1815_2530(s: Spectra) -> np.ndarray:
 )
 def ISLOPE(s: Spectra) -> np.ndarray:
     return -slope(s, 1815, 2530) * 1000.0
+
+
+@parameter(
+    "ISLOPE1",
+    (1815, 2530),
+    "Spectral slope 1: (R1815 - R2530) / (W2530 - W1815), wavelengths in µm "
+    "(ferric coating on dark rock); the CRISM name of ISLOPE",
+    "Slope",
+)
+def ISLOPE1(s: Spectra) -> np.ndarray:
+    return ISLOPE(s)
+
+
+@parameter(
+    "BD3000",
+    (2210, 3000),
+    "3 µm H2O band depth: 1 - R3000 / (R2530 x R2530 / R2210), allowing for the "
+    "spectral slope (bound H2O)",
+    "Band depth",
+)
+def BD3000(s: Spectra) -> np.ndarray:
+    R2530 = s.R(2530)
+    return 1.0 - s.R(3000) / (R2530 * (R2530 / s.R(2210)))
+
+
+@parameter(
+    "CINDEX2",
+    (3450, 3875),
+    "Carbonate index: 1 - continuum (3450-3875 nm) / R3610, the convexity at "
+    "3.6 µm between the 3.4 and 3.9 µm carbonate bands",
+    "Index",
+)
+def CINDEX2(s: Spectra) -> np.ndarray:
+    return band_depth_invert(s, 3450, 3610, 3875, lw=9, mw=11, hw=7)
 
 
 @parameter("BR800", (800, 997), "Band ratio R800 / R997", "Ratio")
