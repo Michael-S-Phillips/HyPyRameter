@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.1 — 2026-10-23
+
+### Fixed
+- **`BDI1000VIS` was not the integrated band depth.** It integrated the
+  reflectance normalised by the RPEAK1 peak, R/RPEAK1, instead of the band
+  depth 1 − R/RPEAK1 (Viviano-Beck et al. 2014), so it ran opposite to
+  CRISM's: high where there is no 1 µm absorption. It also stopped at 989 nm
+  instead of 1023 nm. It is now the integral (µm) of 1 − R/RPEAK1 over
+  833–1023 nm: 0 for a spectrum without a 1 µm band, positive with one.
+  Against the CRISM MTRDR browse product of FRT000047A3 (its FM2 product's
+  blue channel), the new values are 0.990 × CRISM's − 0.0011 (r = 0.987,
+  median difference 0.0013); the old ones were anti-correlated (r = −0.97).
+  **Values of `BDI1000VIS` computed with 0.3.0 or earlier are wrong**,
+  including the FM2 browse product built from it; compute them again. The
+  error predates 0.3.0 (the original code integrated R/RPEAK1 too).
+
 ## 0.3.0 — 2026-09-30
 
 A rewrite around a pure, array-based core. The old classes still work.

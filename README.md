@@ -132,7 +132,7 @@ Both accept `parameters=[...]` to compute a subset. See the notebooks in
 | `BH1500` | 1250–1750 | 1500 nm band height (inverted band depth) |
 | `RPEAK1` | 442–989 | Wavelength (µm) of the reflectance peak of a 5th-order polynomial through 13 anchors between 442 and 989 nm |
 | `RPEAK1_2` | 500–1150 | Wavelength (µm) of the reflectance peak between 500 and 1150 nm after Savitzky-Golay smoothing |
-| `BDI1000VIS` | 833–989 | Integrated 1000 nm band depth (VIS): integral of a 4th-order polynomial through the 833-989 nm reflectance normalised by the RPEAK1 peak |
+| `BDI1000VIS` | 833–1023 | Integrated 1000 nm band depth (VIS): the integral (µm) over 833-1023 nm of 1 - R/RPEAK1, the reflectance normalised by the RPEAK1 peak, through a 4th-order polynomial fit |
 | `SLOPE420_500` | 420–500 | Spectral slope 420-500 nm (reflectance per µm); >5 suggests elemental sulfur |
 | `SLOPE1815_2530` | 1815–2530 | Spectral slope 1815-2530 nm (reflectance per µm) |
 | `ISLOPE` | 1815–2530 | Inverse spectral slope 1815-2530 nm: -SLOPE1815_2530 (point-spectra name) |

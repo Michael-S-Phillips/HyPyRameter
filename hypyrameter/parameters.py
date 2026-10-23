@@ -533,10 +533,11 @@ def RPEAK1_2(s: Spectra) -> np.ndarray:
 
 @parameter(
     "BDI1000VIS",
-    (833, 989),
+    (833, 1023),
     (
-        "Integrated 1000 nm band depth (VIS): integral of a 4th-order polynomial through "
-        "the 833-989 nm reflectance normalised by the RPEAK1 peak"
+        "Integrated 1000 nm band depth (VIS): the integral (µm) over 833-1023 nm "
+        "of 1 - R/RPEAK1, the reflectance normalised by the RPEAK1 peak, through "
+        "a 4th-order polynomial fit"
     ),
     "Peak",
     depends=("RPEAK1",),
@@ -546,11 +547,11 @@ def BDI1000VIS(s: Spectra) -> np.ndarray:
     if peak is None:
         RPEAK1(s)
         peak = s.results["RPEAK1_reflectance"]
-    idx = bands_between(s.wavelengths, 833, 989)
+    idx = bands_between(s.wavelengths, 833, 1023)
     x_um = s.wavelengths[idx] / 1000.0
-    normalised = s.cube[..., idx] / peak[..., None]
-    normalised = fill_nans_along_spectrum(normalised)  # a bad band must not sink the pixel
-    return polynomial_integral(x_um, normalised, degree=4)
+    depth = 1.0 - s.cube[..., idx] / peak[..., None]
+    depth = fill_nans_along_spectrum(depth)  # a bad band must not sink the pixel
+    return polynomial_integral(x_um, depth, degree=4)
 
 
 @parameter(

@@ -166,3 +166,20 @@ def test_clamp_reflectance_drops_fill_values():
 def test_bad_wavelength_count_is_an_error():
     with pytest.raises(ValueError):
         parameters.Spectra(np.zeros((2, 2, 5)), [400, 500, 600])
+
+
+def test_bdi1000vis_is_the_integrated_band_depth_below_the_peak(wavelengths):
+    """Viviano-Beck et al. (2014): R833-R1023 divided by RPEAK1, then the
+    integral of 1 - R/RPEAK1 (µm): 0 without a 1 µm band, positive and
+    growing with one. (0.3.0 integrated R/RPEAK1 itself, over 833-989 nm.)"""
+    flat = np.full(wavelengths.size, 0.3)
+    assert compute(flat, wavelengths, ["BDI1000VIS"])[0] == pytest.approx(0, abs=1e-6)
+
+    shallow = 0.3 * gaussian_absorption(wavelengths, 1000.0, 0.1, 100.0)
+    deep = 0.3 * gaussian_absorption(wavelengths, 1000.0, 0.3, 100.0)
+    out = compute(np.stack([shallow, deep]), wavelengths, ["BDI1000VIS"])[:, 0]
+    assert 0 < out[0] < out[1]
+    # the peak is the unabsorbed 0.3, so the value is the depth's integral
+    fine = np.linspace(833.0, 1023.0, 2001)
+    depth = 0.1 * np.exp(-0.5 * ((fine - 1000.0) / 100.0) ** 2)
+    assert out[0] == pytest.approx(np.trapezoid(depth, fine / 1000.0), rel=0.05)

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hypyrameter"
-version = "0.3.0"
+version = "0.3.1"
 description = "Spectral parameters (band depths, slopes, peaks, indices) for hyperspectral reflectance data."
 readme = "README.md"
 license = "CC-BY-4.0"
